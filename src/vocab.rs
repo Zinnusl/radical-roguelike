@@ -95,6 +95,25 @@ pub static VOCAB: &[VocabEntry] = &[
     VocabEntry { hanzi: "玉", pinyin: "yu4", meaning: "jade", hsk: 3 },
     VocabEntry { hanzi: "魔", pinyin: "mo2", meaning: "demon", hsk: 3 },
     VocabEntry { hanzi: "灵", pinyin: "ling2", meaning: "spirit", hsk: 3 },
+    // Multi-character (elite) words — HSK 2+
+    VocabEntry { hanzi: "朋友", pinyin: "peng2you3", meaning: "friend", hsk: 2 },
+    VocabEntry { hanzi: "学生", pinyin: "xue2sheng1", meaning: "student", hsk: 2 },
+    VocabEntry { hanzi: "老师", pinyin: "lao3shi1", meaning: "teacher", hsk: 2 },
+    VocabEntry { hanzi: "你好", pinyin: "ni3hao3", meaning: "hello", hsk: 2 },
+    VocabEntry { hanzi: "谢谢", pinyin: "xie4xie4", meaning: "thanks", hsk: 2 },
+    VocabEntry { hanzi: "对不起", pinyin: "dui4bu4qi3", meaning: "sorry", hsk: 2 },
+    VocabEntry { hanzi: "再见", pinyin: "zai4jian4", meaning: "goodbye", hsk: 2 },
+    VocabEntry { hanzi: "中国", pinyin: "zhong1guo2", meaning: "China", hsk: 2 },
+    VocabEntry { hanzi: "今天", pinyin: "jin1tian1", meaning: "today", hsk: 2 },
+    VocabEntry { hanzi: "明天", pinyin: "ming2tian1", meaning: "tomorrow", hsk: 2 },
+    VocabEntry { hanzi: "时间", pinyin: "shi2jian1", meaning: "time", hsk: 3 },
+    VocabEntry { hanzi: "力量", pinyin: "li4liang4", meaning: "strength", hsk: 3 },
+    VocabEntry { hanzi: "生命", pinyin: "sheng1ming4", meaning: "life", hsk: 3 },
+    VocabEntry { hanzi: "黑暗", pinyin: "hei1an4", meaning: "darkness", hsk: 3 },
+    VocabEntry { hanzi: "危险", pinyin: "wei1xian3", meaning: "danger", hsk: 3 },
+    VocabEntry { hanzi: "战斗", pinyin: "zhan4dou4", meaning: "battle", hsk: 3 },
+    VocabEntry { hanzi: "武器", pinyin: "wu3qi4", meaning: "weapon", hsk: 3 },
+    VocabEntry { hanzi: "勇气", pinyin: "yong3qi4", meaning: "courage", hsk: 3 },
 ];
 
 /// Get vocab entries for a given max HSK level.
@@ -109,7 +128,13 @@ pub fn vocab_for_floor(floor: i32) -> Vec<&'static VocabEntry> {
 }
 
 /// Check if `input` is a valid pinyin for the given hanzi.
-/// Simple exact match for now; can be extended for tone-flexible matching.
+/// Accepts concatenated ("peng2you3") or space-separated ("peng2 you3") input.
 pub fn check_pinyin(entry: &VocabEntry, input: &str) -> bool {
-    entry.pinyin.eq_ignore_ascii_case(input)
+    let normalized = input.replace(' ', "");
+    entry.pinyin.eq_ignore_ascii_case(&normalized)
+}
+
+/// Returns true if this vocab entry is a multi-character word (elite).
+pub fn is_elite(entry: &VocabEntry) -> bool {
+    entry.hanzi.chars().count() > 1
 }

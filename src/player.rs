@@ -1,6 +1,7 @@
 //! Player state and movement.
 
 use crate::radical::Spell;
+use crate::status::StatusInstance;
 
 /// Equipment slot types
 #[derive(Clone, Debug)]
@@ -31,6 +32,49 @@ pub enum EquipEffect {
     GoldBonus(i32),
 }
 
+pub const MAX_ITEMS: usize = 5;
+
+/// Consumable items the player can carry and use.
+#[derive(Clone, Debug)]
+pub enum Item {
+    /// Heal N HP instantly
+    HealthPotion(i32),
+    /// Apply poison (dmg, turns) to adjacent enemies
+    PoisonFlask(i32, i32),
+    /// Reveal entire floor map
+    RevealScroll,
+    /// Teleport to random explored walkable tile
+    TeleportScroll,
+    /// Grant haste for N turns
+    HastePotion(i32),
+    /// Stun all visible enemies
+    StunBomb,
+}
+
+impl Item {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Item::HealthPotion(_) => "💚 Health Potion",
+            Item::PoisonFlask(_, _) => "☠ Poison Flask",
+            Item::RevealScroll => "👁 Reveal Scroll",
+            Item::TeleportScroll => "✦ Teleport Scroll",
+            Item::HastePotion(_) => "⚡ Haste Potion",
+            Item::StunBomb => "💥 Stun Bomb",
+        }
+    }
+
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            Item::HealthPotion(_) => "HP Pot",
+            Item::PoisonFlask(_, _) => "Poison",
+            Item::RevealScroll => "Reveal",
+            Item::TeleportScroll => "Teleport",
+            Item::HastePotion(_) => "Haste",
+            Item::StunBomb => "Stun",
+        }
+    }
+}
+
 pub const EQUIPMENT_POOL: &[Equipment] = &[
     Equipment { name: "Brush of Clarity", slot: EquipSlot::Weapon, effect: EquipEffect::BonusDamage(1) },
     Equipment { name: "Scholar's Quill", slot: EquipSlot::Weapon, effect: EquipEffect::BonusDamage(2) },
@@ -59,6 +103,10 @@ pub struct Player {
     pub selected_spell: usize,
     /// Shield active (blocks next hit)
     pub shield: bool,
+    /// Active status effects
+    pub statuses: Vec<StatusInstance>,
+    /// Consumable items (max MAX_ITEMS)
+    pub items: Vec<Item>,
     /// Equipped items (up to 3: weapon, armor, charm)
     pub weapon: Option<&'static Equipment>,
     pub armor: Option<&'static Equipment>,
@@ -77,6 +125,8 @@ impl Player {
             spells: Vec::new(),
             selected_spell: 0,
             shield: false,
+            statuses: Vec::new(),
+            items: Vec::new(),
             weapon: None,
             armor: None,
             charm: None,
@@ -91,6 +141,23 @@ impl Player {
     pub fn move_to(&mut self, x: i32, y: i32) {
         self.x = x;
         self.y = y;
+    }
+
+    pub fn add_item(&mut self, item: Item) -> bool {
+        if self.items.len() < MAX_ITEMS {
+            self.items.push(item);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn take_item(&mut self, idx: usize) -> Option<Item> {
+        if idx < self.items.len() {
+            Some(self.items.remove(idx))
+        } else {
+            None
+        }
     }
 
     pub fn add_radical(&mut self, ch: &'static str) {

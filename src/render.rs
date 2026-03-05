@@ -20,6 +20,7 @@ const COL_CORRIDOR_REVEALED: &str = "#272040";
 const COL_STAIRS: &str = "#8ab4ff";
 const COL_FORGE: &str = "#ff8844";
 const COL_SHOP: &str = "#44dd88";
+const COL_CHEST: &str = "#ddaa33";
 const COL_FOG: &str = "#0d0b14";
 const COL_PLAYER: &str = "#ffcc33";
 const COL_PLAYER_OUTLINE: &str = "#bb8800";
@@ -104,12 +105,13 @@ impl Renderer {
                         Tile::StairsDown => COL_STAIRS,
                         Tile::Forge => COL_FORGE,
                         Tile::Shop => COL_SHOP,
+                        Tile::Chest => COL_CHEST,
                     }
                 } else {
                     // revealed but not currently visible
                     match tile {
                         Tile::Wall => COL_WALL_REVEALED,
-                        Tile::Floor | Tile::StairsDown | Tile::Forge | Tile::Shop => COL_FLOOR_REVEALED,
+                        Tile::Floor | Tile::StairsDown | Tile::Forge | Tile::Shop | Tile::Chest => COL_FLOOR_REVEALED,
                         Tile::Corridor => COL_CORRIDOR_REVEALED,
                     }
                 };
@@ -144,6 +146,16 @@ impl Renderer {
                     self.ctx.set_text_align("center");
                     self.ctx
                         .fill_text("$", screen_x + TILE_SIZE / 2.0, screen_y + TILE_SIZE * 0.75)
+                        .ok();
+                }
+
+                // Chest icon
+                if tile == Tile::Chest && visible {
+                    self.ctx.set_fill_style_str("#ffffff");
+                    self.ctx.set_font("16px monospace");
+                    self.ctx.set_text_align("center");
+                    self.ctx
+                        .fill_text("◆", screen_x + TILE_SIZE / 2.0, screen_y + TILE_SIZE * 0.75)
                         .ok();
                 }
 
@@ -236,10 +248,13 @@ impl Renderer {
             let ex = enemy.x as f64 * TILE_SIZE - cam_x;
             let ey = enemy.y as f64 * TILE_SIZE - cam_y;
 
-            // Red/purple glow for alerted/boss enemies
+            // Red/purple/gold glow for alerted/boss/elite enemies
             if enemy.is_boss {
                 self.ctx.set_shadow_color("rgba(200,50,255,0.8)");
                 self.ctx.set_shadow_blur(14.0);
+            } else if enemy.is_elite {
+                self.ctx.set_shadow_color("rgba(255,200,50,0.7)");
+                self.ctx.set_shadow_blur(12.0);
             } else if enemy.alert {
                 self.ctx.set_shadow_color("rgba(255,60,60,0.6)");
                 self.ctx.set_shadow_blur(10.0);
@@ -255,9 +270,11 @@ impl Renderer {
             }
 
             // Draw Hanzi character (bosses are larger and purple)
-            let font_size = if enemy.is_boss { "22px" } else { "18px" };
+            let font_size = if enemy.is_boss { "22px" } else if enemy.is_elite { "16px" } else { "18px" };
             let color = if enemy.is_boss {
                 "#cc66ff"
+            } else if enemy.is_elite {
+                "#ffcc33"
             } else if enemy.alert {
                 "#ff6666"
             } else {
@@ -277,6 +294,14 @@ impl Renderer {
                 self.ctx.fill_rect(ex + 2.0, ey + TILE_SIZE - 4.0, TILE_SIZE - 4.0, 3.0);
                 self.ctx.set_fill_style_str("#ff4444");
                 self.ctx.fill_rect(ex + 2.0, ey + TILE_SIZE - 4.0, (TILE_SIZE - 4.0) * hp_frac, 3.0);
+            }
+
+            // Elite star marker
+            if enemy.is_elite {
+                self.ctx.set_fill_style_str("#ffcc33");
+                self.ctx.set_font("10px monospace");
+                self.ctx.set_text_align("left");
+                self.ctx.fill_text("★", ex, ey + 8.0).ok();
             }
 
             self.ctx.set_shadow_blur(0.0);
@@ -309,6 +334,17 @@ impl Renderer {
                 bar_y + 12.0,
             )
             .ok();
+
+        // Status effect icons (right of HP bar)
+        {
+            let mut sx = bar_x + bar_w + 8.0;
+            self.ctx.set_font("10px monospace");
+            for s in &player.statuses {
+                self.ctx.set_fill_style_str(s.color());
+                self.ctx.fill_text(&format!("{}{}", s.label(), s.turns_left), sx, bar_y + 12.0).ok();
+                sx += 44.0;
+            }
+        }
 
         // Floor indicator + gold (top-right)
         self.ctx.set_text_align("right");
@@ -383,6 +419,29 @@ impl Renderer {
                         y,
                     )
                     .ok();
+            }
+        }
+
+        // ── Item inventory (below spells, left side) ────────────────────
+        if !player.items.is_empty() {
+            let spell_count = player.spells.len();
+            let base_y = if player.radicals.is_empty() && player.spells.is_empty() {
+                44.0
+            } else if player.spells.is_empty() {
+                78.0
+            } else {
+                let sp_y = if player.radicals.is_empty() { 44.0 } else { 78.0 };
+                sp_y + 16.0 + spell_count as f64 * 16.0 + 8.0
+            };
+            self.ctx.set_font("11px monospace");
+            self.ctx.set_text_align("left");
+            self.ctx.set_fill_style_str("#ddaa44");
+            self.ctx.fill_text("Items [1-5]:", 12.0, base_y).ok();
+            for (i, item) in player.items.iter().enumerate() {
+                let y = base_y + 16.0 + i as f64 * 14.0;
+                self.ctx.set_fill_style_str("#ccbb66");
+                self.ctx.set_font("11px monospace");
+                self.ctx.fill_text(&format!("{}: {}", i + 1, item.name()), 12.0, y).ok();
             }
         }
 

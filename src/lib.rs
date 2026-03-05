@@ -10,6 +10,7 @@ mod player;
 mod radical;
 mod render;
 mod srs;
+mod status;
 mod vocab;
 
 #[cfg(feature = "console_error_panic_hook")]

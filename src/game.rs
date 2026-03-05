@@ -13,6 +13,7 @@ use crate::player::{Player, EQUIPMENT_POOL};
 use crate::radical::{self, Spell, SpellEffect};
 use crate::render::Renderer;
 use crate::srs::SrsTracker;
+use crate::status;
 use crate::vocab::{self, VocabEntry};
 
 const MAP_W: i32 = 48;
@@ -57,6 +58,7 @@ pub enum ShopItemKind {
     Radical(&'static str),
     HealFull,
     Equipment(usize), // index into EQUIPMENT_POOL
+    Consumable(crate::player::Item),
 }
 
 pub struct GameState {
@@ -76,6 +78,8 @@ pub struct GameState {
     pub srs: SrsTracker,
     pub total_kills: u32,
     pub total_runs: u32,
+    /// Move counter for haste effect
+    pub move_count: u32,
     rng_state: u64,
 }
 
@@ -158,6 +162,46 @@ impl GameState {
             return;
         }
 
+        // Tick player statuses
+        let (pdmg, pheal) = status::tick_statuses(&mut self.player.statuses);
+        if pdmg > 0 {
+            self.player.hp -= pdmg;
+            self.message = format!("☠ Poison deals {} damage!", pdmg);
+            self.message_timer = 40;
+            if self.player.hp <= 0 {
+                self.player.hp = 0;
+                if let Some(ref audio) = self.audio { audio.play_death(); }
+                self.combat = CombatState::GameOver;
+                return;
+            }
+        }
+        if pheal > 0 {
+            self.player.hp = (self.player.hp + pheal).min(self.player.max_hp);
+        }
+
+        // Tick enemy statuses
+        for e in &mut self.enemies {
+            if e.is_alive() {
+                let (edmg, _) = status::tick_statuses(&mut e.statuses);
+                if edmg > 0 {
+                    e.hp -= edmg;
+                }
+            }
+        }
+
+        // Confused: randomize direction
+        let (dx, dy) = if status::has_confused(&self.player.statuses) {
+            let dirs = [(0, -1), (0, 1), (-1, 0), (1, 0)];
+            dirs[self.rng_next() as usize % 4]
+        } else {
+            (dx, dy)
+        };
+
+        // If map-reveal status active, reveal all tiles
+        if status::has_revealed(&self.player.statuses) {
+            for r in self.level.revealed.iter_mut() { *r = true; }
+        }
+
         let (nx, ny) = self.player.intended_move(dx, dy);
         if !self.level.is_walkable(nx, ny) {
             return;
@@ -216,8 +260,17 @@ impl GameState {
             return;
         }
 
-        // After player moves, enemies take a turn
-        self.enemy_turn();
+        // Chest
+        if self.level.tile(nx, ny) == Tile::Chest {
+            self.open_chest(nx, ny);
+        }
+
+        // After player moves, enemies take a turn (skipped on even moves during haste)
+        self.move_count += 1;
+        let skip_enemy = status::has_haste(&self.player.statuses) && self.move_count % 2 == 0;
+        if !skip_enemy {
+            self.enemy_turn();
+        }
 
         let (px, py) = (self.player.x, self.player.y);
         compute_fov(&mut self.level, px, py, FOV_RADIUS);
@@ -328,6 +381,13 @@ impl GameState {
                     let drop_idx = self.rng_next() as usize % available.len();
                     let dropped = available[drop_idx].ch;
                     self.player.add_radical(dropped);
+
+                    // Elite enemies drop an extra radical
+                    let e_is_elite = self.enemies[enemy_idx].is_elite;
+                    if e_is_elite {
+                        let drop2 = self.rng_next() as usize % available.len();
+                        self.player.add_radical(available[drop2].ch);
+                    }
 
                     // Extra radical from charm
                     let extra_chance = self.player.extra_radical_chance();
@@ -522,6 +582,15 @@ impl GameState {
             kind: ShopItemKind::Equipment(eq_idx),
         });
 
+        // Offer 1 random consumable item
+        let consumable = self.random_item();
+        let cname = consumable.name().to_string();
+        items.push(ShopItem {
+            label: cname,
+            cost: 12 + self.floor_num * 2,
+            kind: ShopItemKind::Consumable(consumable),
+        });
+
         items
     }
 
@@ -550,6 +619,15 @@ impl GameState {
                     let eq = &EQUIPMENT_POOL[*idx];
                     self.player.equip(eq);
                     self.message = format!("Equipped {}!", eq.name);
+                }
+                ShopItemKind::Consumable(consumable) => {
+                    let name = consumable.name().to_string();
+                    if self.player.add_item(consumable.clone()) {
+                        self.message = format!("Bought {}!", name);
+                    } else {
+                        self.message = "Item inventory full!".to_string();
+                        self.player.gold += item.cost; // refund
+                    }
                 }
             }
             self.message_timer = 60;
@@ -665,6 +743,183 @@ impl GameState {
             } else {
                 self.message = "No spells available!".to_string();
                 self.message_timer = 40;
+            }
+        }
+    }
+
+    /// Open a treasure chest tile.
+    fn open_chest(&mut self, cx: i32, cy: i32) {
+        // Remove chest tile
+        let idx = self.level.idx(cx, cy);
+        self.level.tiles[idx] = Tile::Floor;
+
+        let roll = self.rng_next() % 100;
+        if roll < 70 {
+            // 70% — loot (item, gold, or radical)
+            let loot_type = self.rng_next() % 3;
+            match loot_type {
+                0 => {
+                    // Random item
+                    let item = self.random_item();
+                    let name = item.name().to_string();
+                    if self.player.add_item(item) {
+                        self.message = format!("◆ Found {}!", name);
+                    } else {
+                        self.message = "◆ Chest had an item but inventory is full!".to_string();
+                    }
+                }
+                1 => {
+                    // Gold
+                    let gold = 10 + (self.rng_next() % 20) as i32 + self.floor_num * 3;
+                    self.player.gold += gold;
+                    self.message = format!("◆ Found {}g!", gold);
+                }
+                _ => {
+                    // Radical
+                    let available = radical::radicals_for_floor(self.floor_num);
+                    let drop_idx = self.rng_next() as usize % available.len();
+                    let dropped = available[drop_idx].ch;
+                    self.player.add_radical(dropped);
+                    self.message = format!("◆ Found radical [{}]!", dropped);
+                }
+            }
+            self.message_timer = 60;
+        } else if roll < 90 {
+            // 20% — trap
+            let trap_type = self.rng_next() % 2;
+            if trap_type == 0 {
+                // Poison trap
+                self.player.statuses.push(status::StatusInstance::new(
+                    status::StatusKind::Poison { damage: 1 }, 5
+                ));
+                self.message = "◆ Trapped! Poisoned for 5 turns!".to_string();
+            } else {
+                // Damage trap
+                let dmg = 2 + self.floor_num / 2;
+                self.player.hp -= dmg;
+                if self.player.hp <= 0 {
+                    self.player.hp = 0;
+                    if let Some(ref audio) = self.audio { audio.play_death(); }
+                    self.combat = CombatState::GameOver;
+                }
+                self.message = format!("◆ Trapped! Spike trap deals {} damage!", dmg);
+            }
+            self.message_timer = 60;
+        } else {
+            // 10% — mimic! Spawn an enemy here
+            let pool = vocab::vocab_for_floor(self.floor_num);
+            if !pool.is_empty() {
+                let entry_idx = self.rng_next() as usize % pool.len();
+                let entry: &'static VocabEntry = pool[entry_idx];
+                let mut mimic = Enemy::from_vocab(entry, cx, cy, self.floor_num);
+                mimic.hp = mimic.hp + 2; // mimics are tougher
+                mimic.damage += 1;
+                mimic.alert = true;
+                mimic.gold_value *= 2; // better drops
+                self.enemies.push(mimic);
+                // Immediately start combat
+                let idx = self.enemies.len() - 1;
+                self.combat = CombatState::Fighting {
+                    enemy_idx: idx,
+                    timer_ms: 0.0,
+                };
+                self.typing.clear();
+                self.message = format!("◆ It's a Mimic! Type pinyin for {} ({})", entry.hanzi, entry.meaning);
+                self.message_timer = 255;
+            }
+        }
+    }
+
+    /// Generate a random item appropriate for the current floor.
+    fn random_item(&mut self) -> crate::player::Item {
+        use crate::player::Item;
+        match self.rng_next() % 6 {
+            0 => Item::HealthPotion(4 + self.floor_num),
+            1 => Item::PoisonFlask(2, 3),
+            2 => Item::RevealScroll,
+            3 => Item::TeleportScroll,
+            4 => Item::HastePotion(5),
+            _ => Item::StunBomb,
+        }
+    }
+
+    /// Use a consumable item from inventory.
+    fn use_item(&mut self, idx: usize) {
+        if idx >= self.player.items.len() {
+            return;
+        }
+        let item = self.player.items.remove(idx);
+        if let Some(ref audio) = self.audio { audio.play_spell(); }
+
+        match item {
+            crate::player::Item::HealthPotion(heal) => {
+                self.player.hp = (self.player.hp + heal).min(self.player.max_hp);
+                self.message = format!("💚 Healed {} HP! ({}/{})", heal, self.player.hp, self.player.max_hp);
+                self.message_timer = 60;
+            }
+            crate::player::Item::PoisonFlask(dmg, turns) => {
+                let px = self.player.x;
+                let py = self.player.y;
+                let mut count = 0;
+                for e in &mut self.enemies {
+                    if e.is_alive() && (e.x - px).abs() <= 1 && (e.y - py).abs() <= 1 {
+                        e.statuses.push(status::StatusInstance::new(
+                            status::StatusKind::Poison { damage: dmg }, turns
+                        ));
+                        count += 1;
+                    }
+                }
+                self.message = format!("☠ Poisoned {} enemies! ({} dmg × {} turns)", count, dmg, turns);
+                self.message_timer = 60;
+            }
+            crate::player::Item::RevealScroll => {
+                for r in self.level.revealed.iter_mut() { *r = true; }
+                self.message = "👁 Map revealed!".to_string();
+                self.message_timer = 60;
+            }
+            crate::player::Item::TeleportScroll => {
+                // Find random explored walkable tile
+                let mut candidates = Vec::new();
+                for y in 0..self.level.height {
+                    for x in 0..self.level.width {
+                        let i = self.level.idx(x, y);
+                        if self.level.revealed[i] && self.level.tiles[i].is_walkable()
+                            && self.enemy_at(x, y).is_none()
+                            && (x != self.player.x || y != self.player.y) {
+                            candidates.push((x, y));
+                        }
+                    }
+                }
+                if let Some(&(tx, ty)) = candidates.get(self.rng_next() as usize % candidates.len().max(1)) {
+                    self.player.move_to(tx, ty);
+                    let (px, py) = (self.player.x, self.player.y);
+                    compute_fov(&mut self.level, px, py, FOV_RADIUS);
+                    self.message = "✦ Teleported!".to_string();
+                } else {
+                    self.message = "Teleport fizzled — nowhere to go!".to_string();
+                }
+                self.message_timer = 60;
+            }
+            crate::player::Item::HastePotion(turns) => {
+                self.player.statuses.push(status::StatusInstance::new(
+                    status::StatusKind::Haste, turns
+                ));
+                self.message = format!("⚡ Haste for {} turns! Enemies move at half speed.", turns);
+                self.message_timer = 60;
+            }
+            crate::player::Item::StunBomb => {
+                let mut count = 0;
+                for e in &mut self.enemies {
+                    if e.is_alive() {
+                        let i = self.level.idx(e.x, e.y);
+                        if self.level.visible[i] {
+                            e.stunned = true;
+                            count += 1;
+                        }
+                    }
+                }
+                self.message = format!("💥 Stunned {} enemies!", count);
+                self.message_timer = 60;
             }
         }
     }
@@ -826,6 +1081,7 @@ pub fn init_game() -> Result<(), JsValue> {
         srs,
         total_kills,
         total_runs,
+        move_count: 0,
         rng_state: seed,
     }));
 
@@ -994,7 +1250,17 @@ pub fn init_game() -> Result<(), JsValue> {
                 return;
             }
 
-            // Exploration movement
+            // Exploration movement + item usage
+            match key.as_str() {
+                "1" | "2" | "3" | "4" | "5" => {
+                    let idx = key.parse::<usize>().unwrap_or(1) - 1;
+                    s.use_item(idx);
+                    s.tick_message();
+                    s.render();
+                    return;
+                }
+                _ => {}
+            }
             let (dx, dy) = match key.as_str() {
                 "ArrowUp" | "w" | "W" => (0, -1),
                 "ArrowDown" | "s" | "S" => (0, 1),

@@ -1,5 +1,6 @@
 //! Enemy entities that live on the dungeon floor.
 
+use crate::status::StatusInstance;
 use crate::vocab::VocabEntry;
 
 #[derive(Clone)]
@@ -16,18 +17,22 @@ pub struct Enemy {
     pub alert: bool,
     /// Boss enemies are tougher and give better rewards
     pub is_boss: bool,
+    /// Elite multi-character enemies
+    pub is_elite: bool,
     /// Gold dropped on defeat
     pub gold_value: i32,
     /// Stunned: skip next turn
     pub stunned: bool,
+    /// Active status effects
+    pub statuses: Vec<StatusInstance>,
 }
 
 impl Enemy {
     pub fn from_vocab(entry: &'static VocabEntry, x: i32, y: i32, floor: i32) -> Self {
-        // Scale stats with floor depth
-        let hp = 2 + floor / 2;
-        let damage = 1 + floor / 3;
-        let gold = 5 + floor * 2;
+        let is_elite = crate::vocab::is_elite(entry);
+        let hp = if is_elite { 4 + floor } else { 2 + floor / 2 };
+        let damage = if is_elite { 2 + floor / 2 } else { 1 + floor / 3 };
+        let gold = if is_elite { 15 + floor * 3 } else { 5 + floor * 2 };
         Self {
             x,
             y,
@@ -39,8 +44,10 @@ impl Enemy {
             damage,
             alert: false,
             is_boss: false,
+            is_elite,
             gold_value: gold,
             stunned: false,
+            statuses: Vec::new(),
         }
     }
 
@@ -59,8 +66,10 @@ impl Enemy {
             damage,
             alert: true, // bosses are always alert
             is_boss: true,
+            is_elite: false,
             gold_value: gold,
             stunned: false,
+            statuses: Vec::new(),
         }
     }
 

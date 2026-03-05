@@ -39,11 +39,12 @@ pub enum Tile {
     StairsDown,
     Forge,
     Shop,
+    Chest,
 }
 
 impl Tile {
     pub fn is_walkable(self) -> bool {
-        matches!(self, Tile::Floor | Tile::Corridor | Tile::StairsDown | Tile::Forge | Tile::Shop)
+        matches!(self, Tile::Floor | Tile::Corridor | Tile::StairsDown | Tile::Forge | Tile::Shop | Tile::Chest)
     }
 }
 
@@ -274,6 +275,46 @@ impl DungeonLevel {
         }
     }
 
+    /// Place treasure chests in one room (2-3 chests).
+    pub fn place_chests(&mut self, rng: &mut Rng) {
+        if self.rooms.len() < 5 {
+            return;
+        }
+        // Pick a middle room that doesn't have forge/shop/stairs
+        for _ in 0..20 {
+            let pick = rng.range(1, self.rooms.len() as i32 - 1) as usize;
+            let room = &self.rooms[pick];
+            // Check room doesn't already have special tiles
+            let has_special = (room.y..room.y + room.h).any(|ry| {
+                (room.x..room.x + room.w).any(|rx| {
+                    if rx >= 0 && ry >= 0 && rx < self.width && ry < self.height {
+                        let idx = (ry * self.width + rx) as usize;
+                        matches!(self.tiles[idx], Tile::Forge | Tile::Shop | Tile::StairsDown)
+                    } else {
+                        false
+                    }
+                })
+            });
+            if has_special { continue; }
+
+            let chest_count = rng.range(2, 4); // 2-3 chests
+            let mut placed = 0;
+            for _ in 0..10 {
+                let cx = rng.range(room.x + 1, room.x + room.w - 1);
+                let cy = rng.range(room.y + 1, room.y + room.h - 1);
+                if self.in_bounds(cx, cy) {
+                    let idx = self.idx(cx, cy);
+                    if self.tiles[idx] == Tile::Floor {
+                        self.tiles[idx] = Tile::Chest;
+                        placed += 1;
+                        if placed >= chest_count { break; }
+                    }
+                }
+            }
+            if placed > 0 { return; }
+        }
+    }
+
     /// Get player start position (center of first room).
     pub fn start_pos(&self) -> (i32, i32) {
         self.rooms
@@ -380,6 +421,7 @@ impl DungeonLevel {
         level.place_stairs();
         level.place_forges(&mut rng);
         level.place_shop(&mut rng);
+        level.place_chests(&mut rng);
         level
     }
 }
