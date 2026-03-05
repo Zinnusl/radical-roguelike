@@ -31,6 +31,7 @@ pub enum CombatState {
     /// Player is at a forge workbench, selecting radicals
     Forging {
         selected: Vec<usize>,
+        page: usize,
     },
     /// Player is at a shop, browsing items
     Shopping {
@@ -184,8 +185,9 @@ impl GameState {
             } else {
                 self.combat = CombatState::Forging {
                     selected: Vec::new(),
+                    page: 0,
                 };
-                self.message = "Select radicals with 1-9, then Enter to forge. Esc to cancel.".to_string();
+                self.message = "Select radicals with 1-9, ←/→ to page. Enter to forge.".to_string();
                 self.message_timer = 255;
                 let (px, py) = (self.player.x, self.player.y);
                 compute_fov(&mut self.level, px, py, FOV_RADIUS);
@@ -378,7 +380,7 @@ impl GameState {
 
     /// Toggle a radical index in forge selection.
     fn forge_toggle(&mut self, radical_idx: usize) {
-        if let CombatState::Forging { ref mut selected } = self.combat {
+        if let CombatState::Forging { ref mut selected, .. } = self.combat {
             if radical_idx >= self.player.radicals.len() {
                 return;
             }
@@ -392,7 +394,7 @@ impl GameState {
 
     /// Attempt to forge with selected radicals.
     fn forge_submit(&mut self) {
-        let selected = if let CombatState::Forging { ref selected } = self.combat {
+        let selected = if let CombatState::Forging { ref selected, .. } = self.combat {
             selected.clone()
         } else {
             return;
@@ -794,8 +796,23 @@ pub fn init_game() -> Result<(), JsValue> {
                         s.forge_submit();
                         s.render();
                     }
+                    "ArrowLeft" => {
+                        if let CombatState::Forging { ref mut page, .. } = s.combat {
+                            if *page > 0 { *page -= 1; }
+                        }
+                        s.render();
+                    }
+                    "ArrowRight" => {
+                        let max_page = s.player.radicals.len().saturating_sub(1) / 9;
+                        if let CombatState::Forging { ref mut page, .. } = s.combat {
+                            if *page < max_page { *page += 1; }
+                        }
+                        s.render();
+                    }
                     "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
-                        let idx = key.parse::<usize>().unwrap_or(1) - 1;
+                        let slot = key.parse::<usize>().unwrap_or(1) - 1;
+                        let page = if let CombatState::Forging { page, .. } = s.combat { page } else { 0 };
+                        let idx = page * 9 + slot;
                         s.forge_toggle(idx);
                         s.render();
                     }

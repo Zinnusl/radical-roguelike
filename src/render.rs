@@ -486,10 +486,18 @@ impl Renderer {
         }
 
         // ── Forge UI overlay ─────────────────────────────────────────────
-        if let CombatState::Forging { ref selected } = combat {
-            let box_w = 380.0;
+        if let CombatState::Forging { ref selected, ref page } = combat {
+            let page = *page;
             let rad_count = player.radicals.len();
-            let box_h = 100.0 + (rad_count as f64 / 5.0).ceil() * 36.0;
+            let page_size = 9;
+            let max_page = rad_count.saturating_sub(1) / page_size;
+            let page_start = page * page_size;
+            let page_end = (page_start + page_size).min(rad_count);
+            let page_count = page_end - page_start;
+
+            let box_w = 380.0;
+            let box_h = 100.0 + (page_count as f64 / 5.0).ceil() * 36.0
+                + if max_page > 0 { 20.0 } else { 0.0 };
             let box_x = (self.canvas_w - box_w) / 2.0;
             let box_y = 40.0;
 
@@ -511,23 +519,24 @@ impl Renderer {
             // Show radicals in grid
             self.ctx.set_font("11px monospace");
             self.ctx.set_fill_style_str("#aaa");
+            let hint = if max_page > 0 {
+                format!("1-9 toggle, ←/→ page ({}/{}), Enter forge", page + 1, max_page + 1)
+            } else {
+                "Press 1-9 to toggle radicals, Enter to forge".to_string()
+            };
             self.ctx
-                .fill_text(
-                    "Press 1-9 to toggle radicals, Enter to forge",
-                    self.canvas_w / 2.0,
-                    box_y + 44.0,
-                )
+                .fill_text(&hint, self.canvas_w / 2.0, box_y + 44.0)
                 .ok();
 
             let grid_y = box_y + 56.0;
-            for (i, rad_ch) in player.radicals.iter().enumerate() {
-                if i >= 9 { break; } // Only show first 9 (keys 1-9)
-                let col = i % 5;
-                let row = i / 5;
+            for (slot, abs_idx) in (page_start..page_end).enumerate() {
+                let rad_ch = player.radicals[abs_idx];
+                let col = slot % 5;
+                let row = slot / 5;
                 let rx = box_x + 20.0 + col as f64 * 72.0;
                 let ry = grid_y + row as f64 * 36.0;
 
-                let is_selected = selected.contains(&i);
+                let is_selected = selected.contains(&abs_idx);
 
                 // Slot background
                 self.ctx.set_fill_style_str(if is_selected {
@@ -549,7 +558,7 @@ impl Renderer {
                 self.ctx.set_font("10px monospace");
                 self.ctx.set_text_align("left");
                 self.ctx
-                    .fill_text(&format!("{}", i + 1), rx + 2.0, ry + 11.0)
+                    .fill_text(&format!("{}", slot + 1), rx + 2.0, ry + 11.0)
                     .ok();
 
                 // Radical character
@@ -561,9 +570,21 @@ impl Renderer {
                     .ok();
             }
 
+            // Page arrows
+            if max_page > 0 {
+                let arrow_y = grid_y + (page_count as f64 / 5.0).ceil() * 36.0 + 4.0;
+                self.ctx.set_fill_style_str(if page > 0 { "#ffaa66" } else { "#444" });
+                self.ctx.set_font("14px monospace");
+                self.ctx.set_text_align("center");
+                self.ctx.fill_text("◀", box_x + 40.0, arrow_y + 12.0).ok();
+                self.ctx.set_fill_style_str(if page < max_page { "#ffaa66" } else { "#444" });
+                self.ctx.fill_text("▶", box_x + box_w - 40.0, arrow_y + 12.0).ok();
+            }
+
             // Show selected combo
             if !selected.is_empty() {
-                let combo_y = grid_y + ((rad_count.min(9) as f64 / 5.0).ceil()) * 36.0 + 8.0;
+                let combo_y = grid_y + ((page_count as f64 / 5.0).ceil()) * 36.0
+                    + if max_page > 0 { 24.0 } else { 8.0 };
                 let combo_str: String = selected
                     .iter()
                     .map(|&i| player.radicals[i])
