@@ -59,6 +59,8 @@ pub struct Enemy {
     pub summon_cooldown: u8,
     /// Elementalist resistance remembers the last spell school used
     pub resisted_spell: Option<&'static str>,
+    /// Elite compounds are dismantled syllable by syllable
+    pub elite_chain: usize,
 }
 
 impl Enemy {
@@ -86,6 +88,7 @@ impl Enemy {
             phase_triggered: false,
             summon_cooldown: 0,
             resisted_spell: None,
+            elite_chain: 0,
         }
     }
 
@@ -116,6 +119,7 @@ impl Enemy {
             phase_triggered: false,
             summon_cooldown: cooldown,
             resisted_spell: None,
+            elite_chain: 0,
         }
     }
 
@@ -157,11 +161,29 @@ impl Enemy {
             None => None,
         }
     }
+
+    pub fn elite_phase_count(&self) -> usize {
+        crate::vocab::pinyin_syllables(self.pinyin).len().max(1)
+    }
+
+    pub fn elite_expected_syllable(&self) -> Option<&str> {
+        if !self.is_elite {
+            return None;
+        }
+        let syllables = crate::vocab::pinyin_syllables(self.pinyin);
+        let idx = self.elite_chain.min(syllables.len().saturating_sub(1));
+        syllables.get(idx).copied()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::BossKind;
+    use super::{BossKind, Enemy};
+    use crate::vocab::VOCAB;
+
+    fn friend_entry() -> &'static crate::vocab::VocabEntry {
+        VOCAB.iter().find(|entry| entry.hanzi == "朋友").unwrap()
+    }
 
     #[test]
     fn boss_kind_matches_key_floors() {
@@ -169,5 +191,13 @@ mod tests {
         assert_eq!(BossKind::for_floor(10), Some(BossKind::Scholar));
         assert_eq!(BossKind::for_floor(15), Some(BossKind::Elementalist));
         assert_eq!(BossKind::for_floor(20), None);
+    }
+
+    #[test]
+    fn elite_expected_syllable_tracks_chain_progress() {
+        let mut enemy = Enemy::from_vocab(friend_entry(), 0, 0, 6);
+        enemy.elite_chain = 1;
+
+        assert_eq!(enemy.elite_expected_syllable(), Some("you3"));
     }
 }

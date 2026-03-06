@@ -749,8 +749,31 @@ impl Renderer {
             if enemy_idx < enemies.len() {
                 let enemy = &enemies[enemy_idx];
                 let boss_trait = enemy.boss_trait_text();
+                let elite_hint = if enemy.is_elite {
+                    let target = enemy
+                        .hanzi
+                        .chars()
+                        .nth(enemy.elite_chain)
+                        .map(|ch| ch.to_string())
+                        .unwrap_or_else(|| enemy.hanzi.chars().last().unwrap_or('？').to_string());
+                    Some(format!(
+                        "Compound Break {}/{} — {} = {}",
+                        enemy.elite_chain + 1,
+                        enemy.elite_phase_count(),
+                        target,
+                        enemy.elite_expected_syllable().unwrap_or(enemy.pinyin)
+                    ))
+                } else {
+                    None
+                };
                 let box_w = 320.0;
-                let box_h = if boss_trait.is_some() { 160.0 } else { 140.0 };
+                let box_h = if boss_trait.is_some() {
+                    160.0
+                } else if enemy.is_elite {
+                    172.0
+                } else {
+                    140.0
+                };
                 let box_x = (self.canvas_w - box_w) / 2.0;
                 let box_y = 50.0 + (anim_t * 4.0).sin() * 2.0;
                 let hanzi_y = if boss_trait.is_some() { box_y + 46.0 } else { box_y + 52.0 };
@@ -819,10 +842,31 @@ impl Renderer {
                     self.ctx
                         .fill_text(trait_text, self.canvas_w / 2.0, box_y + 84.0)
                         .ok();
+                } else if let Some(elite_hint) = elite_hint.as_deref() {
+                    self.ctx.set_fill_style_str("#ffcc88");
+                    self.ctx.set_font("11px monospace");
+                    self.ctx
+                        .fill_text(elite_hint, self.canvas_w / 2.0, box_y + 84.0)
+                        .ok();
+                    self.ctx.set_fill_style_str("#aa8877");
+                    self.ctx.set_font("10px monospace");
+                    self.ctx
+                        .fill_text(
+                            "Finish the full chain to shatter the compound.",
+                            self.canvas_w / 2.0,
+                            box_y + 98.0,
+                        )
+                        .ok();
                 }
 
                 // Typing input box
-                let input_y = if boss_trait.is_some() { box_y + 102.0 } else { box_y + 90.0 };
+                let input_y = if boss_trait.is_some() {
+                    box_y + 102.0
+                } else if enemy.is_elite {
+                    box_y + 114.0
+                } else {
+                    box_y + 90.0
+                };
                 self.ctx.set_fill_style_str("rgba(0,0,0,0.5)");
                 self.ctx.fill_rect(box_x + 30.0, input_y, box_w - 60.0, 28.0);
                 self.ctx.set_stroke_style_str("#555");
@@ -832,7 +876,11 @@ impl Renderer {
 
                 // Typed text
                 let display = if typing.is_empty() {
-                    "type pinyin…"
+                    if enemy.is_elite {
+                        "type next syllable…"
+                    } else {
+                        "type pinyin…"
+                    }
                 } else {
                     typing
                 };
@@ -864,7 +912,11 @@ impl Renderer {
                 }
                 self.ctx
                     .fill_text(
-                        "Enter=submit  Esc=flee  Tab=cycle spell  Space=cast spell",
+                        if enemy.is_elite {
+                            "Enter=submit syllable  Esc=flee  Tab=cycle spell  Space=cast spell"
+                        } else {
+                            "Enter=submit  Esc=flee  Tab=cycle spell  Space=cast spell"
+                        },
                         self.canvas_w / 2.0,
                         box_y + box_h + 14.0,
                     )

@@ -1229,13 +1229,10 @@ impl GameState {
                 if let Some(ref audio) = self.audio { audio.play_chinese_tone(tone_num); }
                 self.message = format!("🎧 Listen! Type the pinyin you hear...");
             } else {
-                self.message = format!(
-                    "Type pinyin for {} ({})",
-                    self.enemies[idx].hanzi, self.enemies[idx].meaning
-                );
-            }
-            self.message_timer = 255;
-            return;
+                    self.message = combat_prompt_for(&self.enemies[idx], self.listening_mode);
+                }
+                self.message_timer = 255;
+                return;
         }
 
         if target_tile == Tile::StairsDown {
@@ -1432,8 +1429,9 @@ impl GameState {
                     };
                     self.typing.clear();
                     self.message = format!(
-                        "{} attacks! Type pinyin for {} ({})",
-                        self.enemies[i].hanzi, self.enemies[i].hanzi, self.enemies[i].meaning
+                        "{} attacks! {}",
+                        self.enemies[i].hanzi,
+                        combat_prompt_for(&self.enemies[i], self.listening_mode)
                     );
                     self.message_timer = 255;
                 }
@@ -1477,19 +1475,34 @@ impl GameState {
             let e_damage = (self.enemies[enemy_idx].damage - self.player.damage_reduction() - self.player.enchant_damage_reduction()).max(1);
             let e_gold = self.enemies[enemy_idx].gold_value + self.player.gold_bonus() + self.player.enchant_gold_bonus();
             let e_is_boss = self.enemies[enemy_idx].is_boss;
+            let e_is_elite = self.enemies[enemy_idx].is_elite;
             let e_x = self.enemies[enemy_idx].x;
             let e_y = self.enemies[enemy_idx].y;
+            let elite_step = if e_is_elite {
+                Some(vocab::resolve_compound_pinyin_step(
+                    e_pinyin,
+                    self.enemies[enemy_idx].elite_chain,
+                    &self.typing,
+                ))
+            } else {
+                None
+            };
+            let answer_correct = if let Some(step) = elite_step {
+                !matches!(step, vocab::CompoundPinyinStep::Miss { .. })
+            } else {
+                vocab::check_pinyin(
+                    &vocab::VocabEntry {
+                        hanzi: e_hanzi,
+                        pinyin: e_pinyin,
+                        meaning: e_meaning,
+                        hsk: 1,
+                        example: "",
+                    },
+                    &self.typing,
+                )
+            };
 
-            if vocab::check_pinyin(
-                &vocab::VocabEntry {
-                    hanzi: e_hanzi,
-                    pinyin: e_pinyin,
-                    meaning: e_meaning,
-                    hsk: 1,
-                    example: "",
-                },
-                &self.typing,
-            ) {
+            if answer_correct {
                 self.srs.record(e_hanzi, true);
                 self.codex.record(e_hanzi, e_pinyin, e_meaning, true);
                 // Hit with bonus damage from equipment + room modifiers
@@ -1498,7 +1511,49 @@ impl GameState {
                 let tone_bonus = self.player.tone_bonus_damage;
                 self.player.tone_bonus_damage = 0; // consumed
                 let hit_dmg = 2 + self.player.bonus_damage() + self.player.enchant_bonus_damage() + cursed_bonus + warrior_bonus + tone_bonus;
-                self.enemies[enemy_idx].hp -= hit_dmg;
+                let mut dealt_dmg = hit_dmg;
+                let mut elite_completed_cycle = false;
+                let mut elite_message: Option<String> = None;
+                if let Some(step) = elite_step {
+                    match step {
+                        vocab::CompoundPinyinStep::Advanced {
+                            matched,
+                            next_progress,
+                            total,
+                        } => {
+                            dealt_dmg = elite_chain_damage(hit_dmg, total, false);
+                            self.enemies[enemy_idx].elite_chain = next_progress;
+                            self.enemies[enemy_idx].hp = elite_remaining_hp(
+                                self.enemies[enemy_idx].hp,
+                                dealt_dmg,
+                                false,
+                            );
+                            let next_expected = self.enemies[enemy_idx]
+                                .elite_expected_syllable()
+                                .unwrap_or(e_pinyin);
+                            elite_message = Some(format!(
+                                "Linked syllable {} lands! Chain {}/{} — next: {}",
+                                matched, next_progress, total, next_expected
+                            ));
+                        }
+                        vocab::CompoundPinyinStep::Completed { matched, total } => {
+                            dealt_dmg = elite_chain_damage(hit_dmg, total, true);
+                            self.enemies[enemy_idx].elite_chain = 0;
+                            self.enemies[enemy_idx].hp -= dealt_dmg;
+                            elite_completed_cycle = true;
+                            if self.enemies[enemy_idx].hp > 0 {
+                                self.enemies[enemy_idx].stunned = true;
+                                elite_message = Some(format!(
+                                    "Compound broken with {}! {} takes {} damage and staggers.",
+                                    matched, e_hanzi, dealt_dmg
+                                ));
+                            }
+                        }
+                        vocab::CompoundPinyinStep::Miss { .. } => {}
+                    }
+                } else {
+                    self.enemies[enemy_idx].hp -= dealt_dmg;
+                }
                 if self.enemies[enemy_idx].hp <= 0 {
                     self.total_kills += 1;
                     if let Some(ref audio) = self.audio { audio.play_kill(); }
@@ -1518,7 +1573,6 @@ impl GameState {
                     self.advance_radical_quests();
 
                     // Elite enemies drop an extra radical
-                    let e_is_elite = self.enemies[enemy_idx].is_elite;
                     if e_is_elite {
                         let drop2 = self.rng_next() as usize % available.len();
                         self.player.add_radical(available[drop2].ch);
@@ -1552,6 +1606,9 @@ impl GameState {
                             "Defeated {}! +{}g [{}]",
                             e_hanzi, e_gold, dropped
                         );
+                    }
+                    if e_is_elite && elite_completed_cycle {
+                        self.message = format!("{} — Compound shattered!", self.message);
                     }
 
                     // Bosses drop a rare radical
@@ -1608,29 +1665,72 @@ impl GameState {
                         self.typing.clear();
                         return;
                     }
-                    self.message = format!("Hit for {}! {} HP left", hit_dmg, self.enemies[enemy_idx].hp);
-                    self.message_timer = 40;
+                    if let Some(message) = elite_message {
+                        self.message =
+                            format!("{} ({} HP left)", message, self.enemies[enemy_idx].hp);
+                        self.message_timer = if elite_completed_cycle { 80 } else { 70 };
+                    } else {
+                        self.message =
+                            format!("Hit for {}! {} HP left", dealt_dmg, self.enemies[enemy_idx].hp);
+                        self.message_timer = 40;
+                    }
                 }
             } else {
                 // Miss — enemy counter-attacks
+                let expected_pinyin = if let Some(vocab::CompoundPinyinStep::Miss { expected, .. }) =
+                    elite_step
+                {
+                    self.enemies[enemy_idx].elite_chain = 0;
+                    expected
+                } else {
+                    e_pinyin
+                };
                 self.srs.record(e_hanzi, false);
                 self.codex.record(e_hanzi, e_pinyin, e_meaning, false);
                 self.achievements.record_miss();
                 if let Some(ref audio) = self.audio { audio.play_miss(); }
-                if self.player.shield {
+                if self.enemies[enemy_idx].stunned {
+                    self.enemies[enemy_idx].stunned = false;
+                    self.message = if e_is_elite {
+                        format!(
+                            "Wrong chain! Needed \"{}\", but {} is still staggered and cannot counterattack.",
+                            expected_pinyin, e_hanzi
+                        )
+                    } else {
+                        format!(
+                            "Wrong! (was \"{}\") — {} is stunned and can't counterattack!",
+                            expected_pinyin, e_hanzi
+                        )
+                    };
+                    self.message_timer = 70;
+                } else if self.player.shield {
                     self.player.shield = false;
-                    self.message = format!(
-                        "Wrong! (was \"{}\") — Shield absorbed the blow!",
-                        e_pinyin
-                    );
-                    self.message_timer = 60;
+                    self.message = if e_is_elite {
+                        format!(
+                            "Wrong chain! Needed \"{}\" — Shield absorbed the blow!",
+                            expected_pinyin
+                        )
+                    } else {
+                        format!(
+                            "Wrong! (was \"{}\") — Shield absorbed the blow!",
+                            expected_pinyin
+                        )
+                    };
+                    self.message_timer = if e_is_elite { 70 } else { 60 };
                 } else if self.companion == Some(Companion::Guard) && !self.guard_used_this_fight {
                     self.guard_used_this_fight = true;
-                    self.message = format!(
-                        "Wrong! (was \"{}\") — 🛡 Guard blocks the attack!",
-                        e_pinyin
-                    );
-                    self.message_timer = 60;
+                    self.message = if e_is_elite {
+                        format!(
+                            "Wrong chain! Needed \"{}\" — 🛡 Guard blocks the attack!",
+                            expected_pinyin
+                        )
+                    } else {
+                        format!(
+                            "Wrong! (was \"{}\") — 🛡 Guard blocks the attack!",
+                            expected_pinyin
+                        )
+                    };
+                    self.message_timer = if e_is_elite { 70 } else { 60 };
                 } else {
                     self.player.hp -= e_damage;
                     if let Some(ref audio) = self.audio { audio.play_damage(); }
@@ -1639,11 +1739,18 @@ impl GameState {
                     self.particles.spawn_damage(sx, sy, &mut self.rng_state);
                     self.trigger_shake(8);
                     self.flash = Some((255, 50, 50, 0.25));
-                    self.message = format!(
-                        "Wrong! It was \"{}\". {} hits for {}!",
-                        e_pinyin, e_hanzi, e_damage
-                    );
-                    self.message_timer = 60;
+                    self.message = if e_is_elite {
+                        format!(
+                            "Wrong chain! Needed \"{}\". {} hits for {} and the compound resets!",
+                            expected_pinyin, e_hanzi, e_damage
+                        )
+                    } else {
+                        format!(
+                            "Wrong! It was \"{}\". {} hits for {}!",
+                            expected_pinyin, e_hanzi, e_damage
+                        )
+                    };
+                    self.message_timer = if e_is_elite { 70 } else { 60 };
                 }
                 if self.player.hp <= 0 {
                     self.player.hp = 0;
@@ -2894,6 +3001,42 @@ fn spell_category(effect: &SpellEffect) -> &'static str {
     }
 }
 
+fn combat_prompt_for(enemy: &Enemy, listening_mode: bool) -> String {
+    if listening_mode && !enemy.is_elite {
+        "🎧 Listen! Type the pinyin you hear...".to_string()
+    } else if enemy.is_elite {
+        let target = enemy
+            .hanzi
+            .chars()
+            .nth(enemy.elite_chain)
+            .map(|ch| ch.to_string())
+            .unwrap_or_else(|| enemy.hanzi.chars().last().unwrap_or('？').to_string());
+        let expected = enemy.elite_expected_syllable().unwrap_or(enemy.pinyin);
+        format!(
+            "Compound foe {} ({}) — break it syllable by syllable. Start with {} = {}.",
+            enemy.hanzi, enemy.meaning, target, expected
+        )
+    } else {
+        format!("Type pinyin for {} ({})", enemy.hanzi, enemy.meaning)
+    }
+}
+
+fn elite_chain_damage(base_hit: i32, total_syllables: usize, completing_cycle: bool) -> i32 {
+    if completing_cycle {
+        base_hit + total_syllables.saturating_sub(1) as i32
+    } else {
+        (base_hit / 2).max(1)
+    }
+}
+
+fn elite_remaining_hp(current_hp: i32, damage: i32, completing_cycle: bool) -> i32 {
+    if completing_cycle {
+        current_hp - damage
+    } else {
+        (current_hp - damage).max(1)
+    }
+}
+
 fn tutorial_exit_blocker_for(tutorial: Option<&TutorialState>) -> Option<&'static str> {
     let tutorial = tutorial?;
     if !tutorial.combat_done {
@@ -2908,11 +3051,18 @@ fn tutorial_exit_blocker_for(tutorial: Option<&TutorialState>) -> Option<&'stati
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_combo, spell_category, tutorial_exit_blocker_for, GameState, TalentTree, TextSpeed,
+        combat_prompt_for, detect_combo, elite_chain_damage, elite_remaining_hp,
+        spell_category, tutorial_exit_blocker_for, GameState, TalentTree, TextSpeed,
         TutorialState,
     };
+    use crate::enemy::Enemy;
     use crate::player::ITEM_KIND_COUNT;
     use crate::radical::SpellEffect;
+    use crate::vocab::VOCAB;
+
+    fn friend_entry() -> &'static crate::vocab::VocabEntry {
+        VOCAB.iter().find(|entry| entry.hanzi == "朋友").unwrap()
+    }
 
     #[test]
     fn text_speed_storage_round_trip() {
@@ -2976,6 +3126,28 @@ mod tests {
         order.sort_unstable();
 
         assert_eq!(order, (0..ITEM_KIND_COUNT).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn combat_prompt_for_elite_mentions_next_syllable() {
+        let enemy = Enemy::from_vocab(friend_entry(), 0, 0, 6);
+
+        assert_eq!(
+            combat_prompt_for(&enemy, false),
+            "Compound foe 朋友 (friend) — break it syllable by syllable. Start with 朋 = peng2."
+        );
+    }
+
+    #[test]
+    fn elite_chain_damage_spikes_on_finishing_syllable() {
+        assert_eq!(elite_chain_damage(2, 2, false), 1);
+        assert_eq!(elite_chain_damage(2, 2, true), 3);
+    }
+
+    #[test]
+    fn elite_remaining_hp_stays_above_zero_until_chain_finishes() {
+        assert_eq!(elite_remaining_hp(2, 3, false), 1);
+        assert_eq!(elite_remaining_hp(2, 3, true), -1);
     }
 
     #[test]
