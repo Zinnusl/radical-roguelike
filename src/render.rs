@@ -71,6 +71,7 @@ impl Renderer {
         particles: &ParticleSystem,
         shake_timer: u8,
         flash: Option<(u8, u8, u8, f64)>,
+        achievement_popup: Option<(&str, &str)>,
     ) {
         // Screen shake offset
         let shake_x = if shake_timer > 0 { ((shake_timer as f64 * 1.7).sin() * 4.0) } else { 0.0 };
@@ -478,6 +479,26 @@ impl Renderer {
             self.ctx.fill_rect(0.0, 0.0, self.canvas_w, self.canvas_h);
         }
 
+        // ── Achievement popup (top-center) ──────────────────────────────
+        if let Some((icon_name, desc)) = achievement_popup {
+            let pw = 280.0;
+            let ph = 50.0;
+            let px = (self.canvas_w - pw) / 2.0;
+            let py = 50.0;
+            self.ctx.set_fill_style_str("rgba(40,30,60,0.9)");
+            self.ctx.fill_rect(px, py, pw, ph);
+            self.ctx.set_stroke_style_str("#ffcc33");
+            self.ctx.set_line_width(2.0);
+            self.ctx.stroke_rect(px, py, pw, ph);
+            self.ctx.set_font("bold 14px monospace");
+            self.ctx.set_text_align("center");
+            self.ctx.set_fill_style_str("#ffcc33");
+            self.ctx.fill_text("🏆 Achievement Unlocked!", px + pw / 2.0, py + 20.0).ok();
+            self.ctx.set_font("12px monospace");
+            self.ctx.set_fill_style_str("#ffffff");
+            self.ctx.fill_text(&format!("{} — {}", icon_name, desc), px + pw / 2.0, py + 40.0).ok();
+        }
+
         // Minimap (bottom-right)
         self.draw_minimap(level, player);
 
@@ -878,5 +899,99 @@ impl Renderer {
             mm_scale + 1.0,
             mm_scale + 1.0,
         );
+    }
+
+    /// Draw the character codex overlay.
+    pub fn draw_codex(&self, entries: &[&crate::codex::CodexEntry]) {
+        // Dim background
+        self.ctx.set_fill_style_str("rgba(0,0,0,0.85)");
+        self.ctx.fill_rect(0.0, 0.0, self.canvas_w, self.canvas_h);
+
+        // Title
+        self.ctx.set_font("bold 20px monospace");
+        self.ctx.set_text_align("center");
+        self.ctx.set_fill_style_str("#ffcc33");
+        self.ctx.fill_text("📖 Character Codex", self.canvas_w / 2.0, 35.0).ok();
+
+        self.ctx.set_font("11px monospace");
+        self.ctx.set_fill_style_str("#aaaaaa");
+        self.ctx.fill_text(
+            &format!("{} characters encountered — Press C or Esc to close", entries.len()),
+            self.canvas_w / 2.0,
+            55.0,
+        ).ok();
+
+        // Column headers
+        let y_start = 80.0;
+        let row_h = 20.0;
+        self.ctx.set_font("bold 12px monospace");
+        self.ctx.set_text_align("left");
+        self.ctx.set_fill_style_str("#888888");
+        self.ctx.fill_text("Char", 30.0, y_start).ok();
+        self.ctx.fill_text("Pinyin", 100.0, y_start).ok();
+        self.ctx.fill_text("Meaning", 240.0, y_start).ok();
+        self.ctx.fill_text("Seen", 450.0, y_start).ok();
+        self.ctx.fill_text("Acc%", 520.0, y_start).ok();
+
+        // Separator
+        self.ctx.set_stroke_style_str("#444444");
+        self.ctx.begin_path();
+        self.ctx.move_to(20.0, y_start + 6.0);
+        self.ctx.line_to(self.canvas_w - 20.0, y_start + 6.0);
+        self.ctx.stroke();
+
+        // Entries (max ~23 rows that fit on screen)
+        let max_rows = ((self.canvas_h - y_start - 30.0) / row_h) as usize;
+        self.ctx.set_font("14px 'Noto Serif SC', 'SimSun', serif");
+        for (i, entry) in entries.iter().take(max_rows).enumerate() {
+            let y = y_start + 10.0 + (i as f64 + 1.0) * row_h;
+            let acc = entry.accuracy();
+            let color = if acc >= 0.8 {
+                "#66dd66"
+            } else if acc >= 0.5 {
+                "#dddd66"
+            } else {
+                "#dd6666"
+            };
+
+            // Hanzi
+            self.ctx.set_fill_style_str("#ffffff");
+            self.ctx.set_font("16px 'Noto Serif SC', 'SimSun', serif");
+            self.ctx.fill_text(entry.hanzi, 30.0, y).ok();
+
+            // Pinyin
+            self.ctx.set_font("12px monospace");
+            self.ctx.set_fill_style_str("#cccccc");
+            self.ctx.fill_text(entry.pinyin, 100.0, y).ok();
+
+            // Meaning
+            self.ctx.set_fill_style_str("#aaaacc");
+            // Truncate long meanings
+            let meaning = if entry.meaning.len() > 24 {
+                &entry.meaning[..24]
+            } else {
+                entry.meaning
+            };
+            self.ctx.fill_text(meaning, 240.0, y).ok();
+
+            // Times seen
+            self.ctx.set_fill_style_str("#cccccc");
+            self.ctx.fill_text(&entry.times_seen.to_string(), 450.0, y).ok();
+
+            // Accuracy
+            self.ctx.set_fill_style_str(color);
+            self.ctx.fill_text(&format!("{:.0}%", acc * 100.0), 520.0, y).ok();
+        }
+
+        if entries.len() > max_rows {
+            self.ctx.set_font("11px monospace");
+            self.ctx.set_text_align("center");
+            self.ctx.set_fill_style_str("#666666");
+            self.ctx.fill_text(
+                &format!("...and {} more", entries.len() - max_rows),
+                self.canvas_w / 2.0,
+                self.canvas_h - 10.0,
+            ).ok();
+        }
     }
 }

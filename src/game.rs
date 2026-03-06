@@ -6,7 +6,9 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{window, HtmlCanvasElement, KeyboardEvent};
 
+use crate::achievement::AchievementTracker;
 use crate::audio::Audio;
+use crate::codex::Codex;
 use crate::dungeon::{compute_fov, DungeonLevel, Tile};
 use crate::enemy::Enemy;
 use crate::particle::ParticleSystem;
@@ -87,6 +89,14 @@ pub struct GameState {
     pub shake_timer: u8,
     /// Flash overlay (r, g, b, alpha 0.0..1.0)
     pub flash: Option<(u8, u8, u8, f64)>,
+    /// Achievement tracker
+    pub achievements: AchievementTracker,
+    /// Achievement popup: (name, desc) + timer frames
+    pub achievement_popup: Option<(&'static str, &'static str, u16)>,
+    /// Character codex
+    pub codex: Codex,
+    /// Whether codex overlay is showing
+    pub show_codex: bool,
     rng_state: u64,
 }
 
@@ -144,6 +154,7 @@ impl GameState {
     fn new_floor(&mut self) {
         if let Some(ref audio) = self.audio { audio.play_descend(); }
         crate::srs::save_srs(&self.srs);
+        self.codex.save();
         self.floor_num += 1;
         if self.floor_num > self.best_floor {
             self.best_floor = self.floor_num;
@@ -159,6 +170,7 @@ impl GameState {
         self.spawn_enemies();
         let (px, py) = (self.player.x, self.player.y);
         compute_fov(&mut self.level, px, py, FOV_RADIUS);
+        self.achievements.check_floor(self.floor_num);
     }
 
     /// Check if an enemy occupies (x, y). Returns its index.
@@ -387,6 +399,7 @@ impl GameState {
                 &self.typing,
             ) {
                 self.srs.record(e_hanzi, true);
+                self.codex.record(e_hanzi, e_pinyin, e_meaning, true);
                 // Hit with bonus damage from equipment
                 let hit_dmg = 2 + self.player.bonus_damage();
                 self.enemies[enemy_idx].hp -= hit_dmg;
@@ -450,6 +463,14 @@ impl GameState {
                         self.message_timer = 160;
                     }
                     self.combat = CombatState::Explore;
+
+                    // Achievement checks
+                    self.achievements.record_correct();
+                    self.achievements.check_kills(self.total_kills);
+                    self.achievements.check_gold(self.player.gold);
+                    self.achievements.check_radicals(self.player.radicals.len());
+                    if e_is_elite { self.achievements.unlock("first_elite"); }
+                    if e_is_boss { self.achievements.unlock("first_boss"); }
                 } else {
                     if let Some(ref audio) = self.audio { audio.play_hit(); }
                     self.message = format!("Hit for {}! {} HP left", hit_dmg, self.enemies[enemy_idx].hp);
@@ -458,6 +479,8 @@ impl GameState {
             } else {
                 // Miss — enemy counter-attacks
                 self.srs.record(e_hanzi, false);
+                self.codex.record(e_hanzi, e_pinyin, e_meaning, false);
+                self.achievements.record_miss();
                 if let Some(ref audio) = self.audio { audio.play_miss(); }
                 if self.player.shield {
                     self.player.shield = false;
@@ -570,6 +593,8 @@ impl GameState {
                 self.player.radicals.remove(idx);
             }
             self.combat = CombatState::Explore;
+            self.achievements.check_recipes(self.discovered_recipes.len());
+            self.achievements.check_spells(self.player.spells.len());
         } else {
             if let Some(ref audio) = self.audio { audio.play_forge_fail(); }
             self.message = "No recipe found for that combination...".to_string();
@@ -801,6 +826,7 @@ impl GameState {
         // Chest open particles
         let (sx, sy) = self.tile_to_screen(cx, cy);
         self.particles.spawn_chest(sx, sy, &mut self.rng_state);
+        self.achievements.unlock("first_chest");
 
         // Remove chest tile
         let idx = self.level.idx(cx, cy);
@@ -817,6 +843,7 @@ impl GameState {
                     let name = item.name().to_string();
                     if self.player.add_item(item) {
                         self.message = format!("◆ Found {}!", name);
+                        self.achievements.check_items(self.player.items.len());
                     } else {
                         self.message = "◆ Chest had an item but inventory is full!".to_string();
                     }
@@ -1067,6 +1094,7 @@ impl GameState {
     }
 
     fn render(&self) {
+        let popup = self.achievement_popup.map(|(n, d, _)| (n, d));
         self.renderer.draw(
             &self.level,
             &self.player,
@@ -1083,7 +1111,12 @@ impl GameState {
             &self.particles,
             self.shake_timer,
             self.flash,
+            popup,
         );
+        if self.show_codex {
+            let entries = self.codex.sorted_entries();
+            self.renderer.draw_codex(&entries);
+        }
     }
 }
 
@@ -1141,6 +1174,10 @@ pub fn init_game() -> Result<(), JsValue> {
         particles: ParticleSystem::new(),
         shake_timer: 0,
         flash: None,
+        achievements: AchievementTracker::load(),
+        achievement_popup: None,
+        codex: Codex::load(&vocab::VOCAB),
+        show_codex: false,
         rng_state: seed,
     }));
 
@@ -1310,6 +1347,20 @@ pub fn init_game() -> Result<(), JsValue> {
             }
 
             // Exploration movement + item usage
+            // Toggle codex with 'c'
+            if key == "c" || key == "C" {
+                s.show_codex = !s.show_codex;
+                s.render();
+                return;
+            }
+            // Close codex on Escape
+            if s.show_codex {
+                if key == "Escape" {
+                    s.show_codex = false;
+                    s.render();
+                }
+                return;
+            }
             match key.as_str() {
                 "1" | "2" | "3" | "4" | "5" => {
                     let idx = key.parse::<usize>().unwrap_or(1) - 1;
@@ -1364,7 +1415,24 @@ pub fn init_game() -> Result<(), JsValue> {
                     audio.tick_music();
                 }
 
-                let needs_anim = s.particles.is_active() || s.shake_timer > 0 || s.flash.is_some();
+                // Tick achievement popup
+                if s.achievement_popup.is_none() {
+                    if let Some(id) = s.achievements.pop_popup() {
+                        if let Some(def) = AchievementTracker::get_def(id) {
+                            s.achievement_popup = Some((def.name, def.desc, 180)); // ~3 seconds at 60fps
+                        }
+                    }
+                }
+                if let Some((_, _, ref mut timer)) = s.achievement_popup {
+                    if *timer > 0 {
+                        *timer -= 1;
+                    } else {
+                        s.achievement_popup = None;
+                    }
+                }
+
+                let has_popup = s.achievement_popup.is_some();
+                let needs_anim = s.particles.is_active() || s.shake_timer > 0 || s.flash.is_some() || has_popup;
                 if needs_anim {
                     s.particles.tick();
                     if s.shake_timer > 0 {
