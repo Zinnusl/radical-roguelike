@@ -1,8 +1,11 @@
-const CACHE_NAME = 'radical-dungeon-v1';
+const CACHE_NAME = 'radical-dungeon-v2';
 const ASSETS = [
-  '/index.html',
-  '/pkg/radical_roguelike.js',
-  '/pkg/radical_roguelike_bg.wasm',
+  './',
+  './index.html',
+  './manifest.json',
+  './sw.js',
+  './pkg/radical_roguelike.js',
+  './pkg/radical_roguelike_bg.wasm',
 ];
 
 self.addEventListener('install', event => {
