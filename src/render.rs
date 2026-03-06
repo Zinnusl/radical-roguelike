@@ -1,11 +1,14 @@
 //! Canvas 2D rendering for the dungeon.
 
+use std::collections::BTreeMap;
+
+use js_sys::Date;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
-use crate::dungeon::{DungeonLevel, Tile};
+use crate::dungeon::{AltarKind, DungeonLevel, Tile};
 use crate::enemy::Enemy;
-use crate::game::CombatState;
+use crate::game::{CombatState, GameSettings, TalentTree};
 use crate::particle::ParticleSystem;
 use crate::player::Player;
 
@@ -76,10 +79,23 @@ impl Renderer {
         listening_mode: bool,
         companion: Option<crate::game::Companion>,
         quests: &[crate::game::Quest],
+        tutorial_hint: Option<&str>,
+        item_labels: &[String],
+        settings: &GameSettings,
+        show_settings: bool,
+        settings_cursor: usize,
+        talents: &TalentTree,
+        show_talent_tree: bool,
+        talent_cursor: usize,
+        knowledge_points_available: i32,
+        knowledge_points_total: i32,
+        knowledge_progress: usize,
+        knowledge_step: usize,
     ) {
+        let anim_t = Date::now() / 1000.0;
         // Screen shake offset
-        let shake_x = if shake_timer > 0 { ((shake_timer as f64 * 1.7).sin() * 4.0) } else { 0.0 };
-        let shake_y = if shake_timer > 0 { ((shake_timer as f64 * 2.3).cos() * 3.0) } else { 0.0 };
+        let shake_x = if shake_timer > 0 { (shake_timer as f64 * 1.7).sin() * 4.0 } else { 0.0 };
+        let shake_y = if shake_timer > 0 { (shake_timer as f64 * 2.3).cos() * 3.0 } else { 0.0 };
 
         // Camera: center on player
         let cam_x = player.x as f64 * TILE_SIZE - self.canvas_w / 2.0 + TILE_SIZE / 2.0 - shake_x;
@@ -119,14 +135,34 @@ impl Renderer {
                         Tile::Forge => COL_FORGE,
                         Tile::Shop => COL_SHOP,
                         Tile::Chest => COL_CHEST,
+                        Tile::Crate => "#7b5232",
+                        Tile::Spikes => "#884444",
+                        Tile::Oil => "#5a4722",
+                        Tile::Water => "#3355aa",
                         Tile::Npc(_) => "#55aacc",
                         Tile::Shrine => "#ddaa55",
+                        Tile::Altar(AltarKind::Jade) => "#30563f",
+                        Tile::Altar(AltarKind::Gale) => "#334d74",
+                        Tile::Altar(AltarKind::Mirror) => "#5a456e",
+                        Tile::Sign(_) => "#8a6b47",
                     }
                 } else {
                     // revealed but not currently visible
                     match tile {
                         Tile::Wall => COL_WALL_REVEALED,
-                        Tile::Floor | Tile::StairsDown | Tile::Forge | Tile::Shop | Tile::Chest | Tile::Npc(_) | Tile::Shrine => COL_FLOOR_REVEALED,
+                        Tile::Floor
+                        | Tile::StairsDown
+                        | Tile::Forge
+                        | Tile::Shop
+                        | Tile::Chest
+                        | Tile::Crate
+                        | Tile::Spikes
+                        | Tile::Oil
+                        | Tile::Water
+                        | Tile::Npc(_)
+                        | Tile::Shrine
+                        | Tile::Altar(_)
+                        | Tile::Sign(_) => COL_FLOOR_REVEALED,
                         Tile::Corridor => COL_CORRIDOR_REVEALED,
                     }
                 };
@@ -174,6 +210,42 @@ impl Renderer {
                         .ok();
                 }
 
+                if tile == Tile::Crate && visible {
+                    self.ctx.set_fill_style_str("#ffffff");
+                    self.ctx.set_font("15px monospace");
+                    self.ctx.set_text_align("center");
+                    self.ctx
+                        .fill_text("▣", screen_x + TILE_SIZE / 2.0, screen_y + TILE_SIZE * 0.75)
+                        .ok();
+                }
+
+                if tile == Tile::Spikes && visible {
+                    self.ctx.set_fill_style_str("#ffffff");
+                    self.ctx.set_font("14px monospace");
+                    self.ctx.set_text_align("center");
+                    self.ctx
+                        .fill_text("^", screen_x + TILE_SIZE / 2.0, screen_y + TILE_SIZE * 0.75)
+                        .ok();
+                }
+
+                if tile == Tile::Oil && visible {
+                    self.ctx.set_fill_style_str("#ffdd88");
+                    self.ctx.set_font("14px monospace");
+                    self.ctx.set_text_align("center");
+                    self.ctx
+                        .fill_text("~", screen_x + TILE_SIZE / 2.0, screen_y + TILE_SIZE * 0.75)
+                        .ok();
+                }
+
+                if tile == Tile::Water && visible {
+                    self.ctx.set_fill_style_str("#ccddff");
+                    self.ctx.set_font("14px monospace");
+                    self.ctx.set_text_align("center");
+                    self.ctx
+                        .fill_text("≈", screen_x + TILE_SIZE / 2.0, screen_y + TILE_SIZE * 0.75)
+                        .ok();
+                }
+
                 // NPC icon
                 if let Tile::Npc(npc_type) = tile {
                     if visible {
@@ -201,6 +273,28 @@ impl Renderer {
                         .ok();
                 }
 
+                if let Tile::Altar(kind) = tile {
+                    if visible {
+                        self.ctx.set_fill_style_str(kind.color());
+                        self.ctx.set_font("16px monospace");
+                        self.ctx.set_text_align("center");
+                        self.ctx
+                            .fill_text(kind.icon(), screen_x + TILE_SIZE / 2.0, screen_y + TILE_SIZE * 0.75)
+                            .ok();
+                    }
+                }
+
+                if let Tile::Sign(_) = tile {
+                    if visible {
+                        self.ctx.set_fill_style_str("#ffffff");
+                        self.ctx.set_font("16px monospace");
+                        self.ctx.set_text_align("center");
+                        self.ctx
+                            .fill_text("?", screen_x + TILE_SIZE / 2.0, screen_y + TILE_SIZE * 0.75)
+                            .ok();
+                    }
+                }
+
                 // Subtle grid lines for floors
                 if visible && tile.is_walkable() {
                     self.ctx.set_stroke_style_str("rgba(255,255,255,0.04)");
@@ -211,11 +305,13 @@ impl Renderer {
             }
         }
 
+        self.draw_room_ambience(room_modifier, anim_t);
+
         // Draw player
         let px = player.x as f64 * TILE_SIZE - cam_x;
         let py = player.y as f64 * TILE_SIZE - cam_y;
         let center_x = px + TILE_SIZE / 2.0;
-        let center_y = py + TILE_SIZE / 2.0;
+        let center_y = py + TILE_SIZE / 2.0 + (anim_t * 4.4).sin() * 1.4;
         let r = TILE_SIZE * 0.38;
 
         // Glow
@@ -288,7 +384,8 @@ impl Renderer {
                 continue;
             }
             let ex = enemy.x as f64 * TILE_SIZE - cam_x;
-            let ey = enemy.y as f64 * TILE_SIZE - cam_y;
+            let ey = enemy.y as f64 * TILE_SIZE - cam_y
+                + (anim_t * 3.3 + (enemy.x as f64 * 0.37) + (enemy.y as f64 * 0.23)).sin() * 1.2;
 
             // Red/purple/gold glow for alerted/boss/elite enemies
             if enemy.is_boss {
@@ -392,9 +489,14 @@ impl Renderer {
         self.ctx.set_text_align("right");
         self.ctx.set_font("14px monospace");
         self.ctx.set_fill_style_str("#aaa");
+        let floor_label = if floor_num == 0 {
+            format!("Tutorial  Best: {}", best_floor)
+        } else {
+            format!("Floor {}  Best: {}", floor_num, best_floor)
+        };
         self.ctx
             .fill_text(
-                &format!("Floor {}  Best: {}", floor_num, best_floor),
+                &floor_label,
                 self.canvas_w - 12.0,
                 24.0,
             )
@@ -451,6 +553,27 @@ impl Renderer {
         if let Some(comp) = companion {
             self.ctx.set_fill_style_str("#55ccaa");
             self.ctx.fill_text(&format!("{} {}", comp.icon(), comp.name()), self.canvas_w - 12.0, eq_y).ok();
+            eq_y += 14.0;
+        }
+
+        self.ctx.set_fill_style_str("#7e8dbb");
+        self.ctx.fill_text("[X] Skip floor", self.canvas_w - 12.0, eq_y).ok();
+
+        if let Some(tutorial_hint) = tutorial_hint {
+            let box_w = 360.0;
+            let box_x = (self.canvas_w - box_w) / 2.0;
+            self.ctx.set_fill_style_str("rgba(10,8,18,0.82)");
+            self.ctx.fill_rect(box_x, 10.0, box_w, 38.0);
+            self.ctx.set_stroke_style_str("#ffcc33");
+            self.ctx.set_line_width(1.0);
+            self.ctx.stroke_rect(box_x, 10.0, box_w, 38.0);
+            self.ctx.set_text_align("center");
+            self.ctx.set_fill_style_str("#ffcc33");
+            self.ctx.set_font("11px monospace");
+            self.ctx.fill_text("Tutorial", self.canvas_w / 2.0, 24.0).ok();
+            self.ctx.set_fill_style_str("#ddd");
+            self.ctx.set_font("12px monospace");
+            self.ctx.fill_text(tutorial_hint, self.canvas_w / 2.0, 39.0).ok();
         }
 
         // ── Radical inventory (left side) ───────────────────────────────
@@ -505,12 +628,12 @@ impl Renderer {
             self.ctx.set_font("11px monospace");
             self.ctx.set_text_align("left");
             self.ctx.set_fill_style_str("#ddaa44");
-            self.ctx.fill_text("Items [1-5]:", 12.0, base_y).ok();
-            for (i, item) in player.items.iter().enumerate() {
+            self.ctx.fill_text("Items [1-5]  [I] Inventory:", 12.0, base_y).ok();
+            for (i, label) in item_labels.iter().enumerate() {
                 let y = base_y + 16.0 + i as f64 * 14.0;
                 self.ctx.set_fill_style_str("#ccbb66");
                 self.ctx.set_font("11px monospace");
-                self.ctx.fill_text(&format!("{}: {}", i + 1, item.name()), 12.0, y).ok();
+                self.ctx.fill_text(&format!("{}: {}", i + 1, label), 12.0, y).ok();
             }
         }
 
@@ -525,13 +648,29 @@ impl Renderer {
         // ── Particles ────────────────────────────────────────────────────
         for p in &particles.particles {
             let alpha = p.life.max(0.0).min(1.0);
-            self.ctx.set_fill_style_str(&format!(
-                "rgba({},{},{},{})",
-                p.r, p.g, p.b, alpha
-            ));
-            let half = p.size * alpha / 2.0;
-            self.ctx.fill_rect(p.x - half, p.y - half, p.size * alpha, p.size * alpha);
+            let radius = (p.size * (0.35 + alpha * 0.65)).max(1.0);
+            self.ctx
+                .set_fill_style_str(&format!("rgba({},{},{},{})", p.r, p.g, p.b, alpha));
+            self.ctx
+                .set_shadow_color(&format!("rgba({},{},{},{})", p.r, p.g, p.b, alpha * 0.7));
+            self.ctx.set_shadow_blur(radius * 2.5);
+            self.ctx.begin_path();
+            self.ctx.arc(p.x, p.y, radius, 0.0, std::f64::consts::TAU).ok();
+            self.ctx.fill();
+
+            let speed = (p.vx * p.vx + p.vy * p.vy).sqrt();
+            if speed > 1.2 {
+                self.ctx
+                    .set_stroke_style_str(&format!("rgba({},{},{},{})", p.r, p.g, p.b, alpha * 0.35));
+                self.ctx.set_line_width(radius.max(1.0));
+                self.ctx.begin_path();
+                self.ctx.move_to(p.x, p.y);
+                self.ctx.line_to(p.x - p.vx * 1.5, p.y - p.vy * 1.5);
+                self.ctx.stroke();
+            }
         }
+        self.ctx.set_shadow_blur(0.0);
+        self.ctx.set_shadow_color("transparent");
 
         // ── Flash overlay ───────────────────────────────────────────────
         if let Some((r, g, b, a)) = flash {
@@ -588,18 +727,19 @@ impl Renderer {
 
         // ── Message bar (bottom-center) ─────────────────────────────────
         if !message.is_empty() {
+            let message_lift = (anim_t * 7.5).sin().abs() * 2.0;
             self.ctx.set_font("14px monospace");
             self.ctx.set_text_align("center");
-            self.ctx.set_fill_style_str("rgba(0,0,0,0.7)");
+            self.ctx.set_fill_style_str("rgba(0,0,0,0.78)");
             self.ctx.fill_rect(
                 self.canvas_w * 0.15,
-                self.canvas_h - 36.0,
+                self.canvas_h - 38.0 - message_lift,
                 self.canvas_w * 0.7,
-                28.0,
+                30.0,
             );
             self.ctx.set_fill_style_str("#ffdd88");
             self.ctx
-                .fill_text(message, self.canvas_w / 2.0, self.canvas_h - 16.0)
+                .fill_text(message, self.canvas_w / 2.0, self.canvas_h - 17.0 - message_lift)
                 .ok();
         }
 
@@ -608,10 +748,12 @@ impl Renderer {
             let enemy_idx = *enemy_idx;
             if enemy_idx < enemies.len() {
                 let enemy = &enemies[enemy_idx];
+                let boss_trait = enemy.boss_trait_text();
                 let box_w = 320.0;
-                let box_h = 140.0;
+                let box_h = if boss_trait.is_some() { 160.0 } else { 140.0 };
                 let box_x = (self.canvas_w - box_w) / 2.0;
-                let box_y = 50.0;
+                let box_y = 50.0 + (anim_t * 4.0).sin() * 2.0;
+                let hanzi_y = if boss_trait.is_some() { box_y + 46.0 } else { box_y + 52.0 };
 
                 // Background
                 self.ctx.set_fill_style_str("rgba(20,10,30,0.92)");
@@ -619,6 +761,15 @@ impl Renderer {
                 self.ctx.set_stroke_style_str("#ff6666");
                 self.ctx.set_line_width(2.0);
                 self.ctx.stroke_rect(box_x, box_y, box_w, box_h);
+
+                if let Some(kind) = enemy.boss_kind {
+                    self.ctx.set_fill_style_str("#ffcc88");
+                    self.ctx.set_font("bold 12px monospace");
+                    self.ctx.set_text_align("center");
+                    self.ctx
+                        .fill_text(kind.title(), self.canvas_w / 2.0, box_y + 16.0)
+                        .ok();
+                }
 
                 // Enemy hanzi (large) — hidden in listening mode for non-elite
                 let show_hanzi = !listening_mode || enemy.is_elite;
@@ -629,7 +780,7 @@ impl Renderer {
                     .fill_text(
                         if show_hanzi { enemy.hanzi } else { "🎧 ???" },
                         self.canvas_w / 2.0,
-                        box_y + 52.0,
+                        hanzi_y,
                     )
                     .ok();
 
@@ -641,7 +792,7 @@ impl Renderer {
                         .fill_text(
                             &format!("({})", enemy.meaning),
                             self.canvas_w / 2.0,
-                            box_y + 72.0,
+                            hanzi_y + 20.0,
                         )
                         .ok();
                 } else {
@@ -657,13 +808,21 @@ impl Renderer {
                         .fill_text(
                             teacher_hint,
                             self.canvas_w / 2.0,
-                            box_y + 72.0,
+                            hanzi_y + 20.0,
                         )
                         .ok();
                 }
 
+                if let Some(trait_text) = boss_trait.as_deref() {
+                    self.ctx.set_fill_style_str("#c8a6ff");
+                    self.ctx.set_font("11px monospace");
+                    self.ctx
+                        .fill_text(trait_text, self.canvas_w / 2.0, box_y + 84.0)
+                        .ok();
+                }
+
                 // Typing input box
-                let input_y = box_y + 90.0;
+                let input_y = if boss_trait.is_some() { box_y + 102.0 } else { box_y + 90.0 };
                 self.ctx.set_fill_style_str("rgba(0,0,0,0.5)");
                 self.ctx.fill_rect(box_x + 30.0, input_y, box_w - 60.0, 28.0);
                 self.ctx.set_stroke_style_str("#555");
@@ -972,17 +1131,16 @@ impl Renderer {
                 }
 
                 let marker = if selected { "►" } else { " " };
-                let display_cost = if companion == Some(crate::game::Companion::Merchant) {
-                    (item.cost as f32 * 0.8).ceil() as i32
-                } else {
-                    item.cost
-                };
+                let total_discount = (player.shop_discount_pct
+                    + if companion == Some(crate::game::Companion::Merchant) { 20 } else { 0 })
+                    .clamp(0, 50);
+                let display_cost = ((item.cost * (100 - total_discount)) + 99) / 100;
                 let can_afford = player.gold >= display_cost;
                 self.ctx.set_fill_style_str(if can_afford { "#ccffcc" } else { "#666" });
                 self.ctx.set_font("13px monospace");
                 self.ctx.set_text_align("left");
-                let price_label = if companion == Some(crate::game::Companion::Merchant) {
-                    format!("{} {} — {}g (💰 -20%)", marker, item.label, display_cost)
+                let price_label = if total_discount > 0 {
+                    format!("{} {} — {}g ({}% off)", marker, item.label, display_cost, total_discount)
                 } else {
                     format!("{} {} — {}g", marker, item.label, item.cost)
                 };
@@ -1009,11 +1167,19 @@ impl Renderer {
         }
 
         // ── Sentence Challenge overlay ──────────────────────────────────
-        if let CombatState::SentenceChallenge { ref tiles, ref words, cursor, ref arranged, meaning } = combat {
+        if let CombatState::SentenceChallenge {
+            ref tiles,
+            ref words,
+            cursor,
+            ref arranged,
+            meaning,
+            ..
+        } = combat
+        {
             let box_w = 380.0;
             let box_h = 200.0;
             let box_x = (self.canvas_w - box_w) / 2.0;
-            let box_y = 40.0;
+            let box_y = 40.0 + (anim_t * 3.2).sin() * 3.0;
 
             self.ctx.set_fill_style_str("rgba(15,10,30,0.95)");
             self.ctx.fill_rect(box_x, box_y, box_w, box_h);
@@ -1075,7 +1241,7 @@ impl Renderer {
             let box_w = 320.0;
             let box_h = 180.0;
             let box_x = (self.canvas_w - box_w) / 2.0;
-            let box_y = 60.0;
+            let box_y = 60.0 + (anim_t * 3.0).sin() * 2.0;
 
             self.ctx.set_fill_style_str("rgba(20,15,40,0.95)");
             self.ctx.fill_rect(box_x, box_y, box_w, box_h);
@@ -1124,7 +1290,7 @@ impl Renderer {
             self.ctx.fill_rect(0.0, 0.0, self.canvas_w, self.canvas_h);
 
             let cx = self.canvas_w / 2.0;
-            let mut y = 60.0;
+            let mut y = 60.0 + (anim_t * 2.1).sin() * 4.0;
 
             self.ctx.set_fill_style_str("#ffcc33");
             self.ctx.set_font("32px monospace");
@@ -1153,10 +1319,41 @@ impl Renderer {
                 y += 36.0;
             }
 
+            if total_runs == 0 {
+                self.ctx.set_fill_style_str("#66ccff");
+                self.ctx.set_font("12px monospace");
+                self.ctx.fill_text("First run starts with a short tutorial floor.", cx, y).ok();
+                y += 24.0;
+            }
+
             y += 10.0;
             self.ctx.set_fill_style_str("#ffcc33");
             self.ctx.set_font("14px monospace");
             self.ctx.fill_text("[D] Daily Challenge (fixed seed)", cx, y).ok();
+            y += 24.0;
+            self.ctx.set_fill_style_str("#88bbff");
+            self.ctx.set_font("12px monospace");
+            self.ctx.fill_text("[O] Options", cx, y).ok();
+            y += 20.0;
+            self.ctx.set_fill_style_str(if knowledge_points_available > 0 { "#aaff88" } else { "#88ddff" });
+            self.ctx.fill_text(
+                &format!("[T] Talent Tree  ({} KP available)", knowledge_points_available),
+                cx,
+                y,
+            ).ok();
+            y += 18.0;
+            self.ctx.set_fill_style_str("#8899aa");
+            self.ctx.set_font("11px monospace");
+            self.ctx.fill_text(
+                &format!(
+                    "Meta bonuses: +{} HP  -{}% shop  +{} spell",
+                    talents.starting_hp_bonus(),
+                    talents.shop_discount_pct(),
+                    talents.spell_power_bonus()
+                ),
+                cx,
+                y,
+            ).ok();
         }
 
         // ── Game Over overlay ───────────────────────────────────────────
@@ -1166,7 +1363,7 @@ impl Renderer {
                 .fill_rect(0.0, 0.0, self.canvas_w, self.canvas_h);
 
             let cx = self.canvas_w / 2.0;
-            let mut y = self.canvas_h / 2.0 - 80.0;
+            let mut y = self.canvas_h / 2.0 - 80.0 + (anim_t * 1.7).sin() * 4.0;
 
             self.ctx.set_fill_style_str("#ff4444");
             self.ctx.set_font("48px monospace");
@@ -1216,6 +1413,209 @@ impl Renderer {
             self.ctx.set_fill_style_str("#ffcc33");
             self.ctx.set_font("14px monospace");
             self.ctx.fill_text("Press R to restart", cx, y).ok();
+            y += 20.0;
+            self.ctx.set_fill_style_str("#88ddff");
+            self.ctx.set_font("12px monospace");
+            self.ctx
+                .fill_text(
+                    &format!("[T] Talent Tree  ({} KP available)", knowledge_points_available),
+                    cx,
+                    y,
+                )
+                .ok();
+        }
+
+        if show_settings {
+            let box_w = 360.0;
+            let box_h = 220.0;
+            let box_x = (self.canvas_w - box_w) / 2.0;
+            let box_y = (self.canvas_h - box_h) / 2.0 + (anim_t * 2.8).sin() * 3.0;
+            let rows = [
+                ("Music Volume", format!("{}%", settings.music_volume)),
+                ("SFX Volume", format!("{}%", settings.sfx_volume)),
+                (
+                    "Screen Shake",
+                    if settings.screen_shake { "On".to_string() } else { "Off".to_string() },
+                ),
+                ("Text Speed", settings.text_speed.label().to_string()),
+            ];
+
+            self.ctx.set_fill_style_str("rgba(0,0,0,0.65)");
+            self.ctx.fill_rect(0.0, 0.0, self.canvas_w, self.canvas_h);
+            self.ctx.set_fill_style_str("rgba(20,18,36,0.97)");
+            self.ctx.fill_rect(box_x, box_y, box_w, box_h);
+            self.ctx.set_stroke_style_str("#88bbff");
+            self.ctx.set_line_width(2.0);
+            self.ctx.stroke_rect(box_x, box_y, box_w, box_h);
+
+            self.ctx.set_fill_style_str("#ffcc88");
+            self.ctx.set_font("bold 18px monospace");
+            self.ctx.set_text_align("center");
+            self.ctx.fill_text("Options / 设置", self.canvas_w / 2.0, box_y + 26.0).ok();
+
+            self.ctx.set_font("14px monospace");
+            for (i, (label, value)) in rows.iter().enumerate() {
+                let y = box_y + 60.0 + i as f64 * 34.0;
+                let selected = i == settings_cursor;
+                if selected {
+                    self.ctx.set_fill_style_str("rgba(136,187,255,0.16)");
+                    self.ctx.fill_rect(box_x + 16.0, y - 16.0, box_w - 32.0, 24.0);
+                }
+                self.ctx.set_fill_style_str(if selected { "#ffdd88" } else { "#ccd6ff" });
+                self.ctx.set_text_align("left");
+                self.ctx.fill_text(label, box_x + 24.0, y).ok();
+                self.ctx.set_text_align("right");
+                self.ctx.fill_text(value, box_x + box_w - 24.0, y).ok();
+            }
+
+            self.ctx.set_fill_style_str("#7784aa");
+            self.ctx.set_font("11px monospace");
+            self.ctx.set_text_align("center");
+            self.ctx.fill_text(
+                "↑↓ select  ←→ adjust  Enter=cycle/toggle  Esc/O=close",
+                self.canvas_w / 2.0,
+                box_y + box_h - 16.0,
+            ).ok();
+        }
+
+        if show_talent_tree {
+            let box_w = 420.0;
+            let box_h = 240.0;
+            let box_x = (self.canvas_w - box_w) / 2.0;
+            let box_y = (self.canvas_h - box_h) / 2.0 + (anim_t * 2.4).sin() * 3.0;
+            self.ctx.set_fill_style_str("rgba(4,10,18,0.7)");
+            self.ctx.fill_rect(0.0, 0.0, self.canvas_w, self.canvas_h);
+            self.ctx.set_fill_style_str("rgba(16,24,36,0.97)");
+            self.ctx.fill_rect(box_x, box_y, box_w, box_h);
+            self.ctx.set_stroke_style_str("#66ddaa");
+            self.ctx.set_line_width(2.0);
+            self.ctx.stroke_rect(box_x, box_y, box_w, box_h);
+
+            self.ctx.set_text_align("center");
+            self.ctx.set_fill_style_str("#c8ffb0");
+            self.ctx.set_font("bold 18px monospace");
+            self.ctx.fill_text("Talent Tree / 天赋", self.canvas_w / 2.0, box_y + 26.0).ok();
+
+            self.ctx.set_fill_style_str("#aacccc");
+            self.ctx.set_font("12px monospace");
+            self.ctx.fill_text(
+                &format!(
+                    "Knowledge Points: {} available / {} earned",
+                    knowledge_points_available, knowledge_points_total
+                ),
+                self.canvas_w / 2.0,
+                box_y + 46.0,
+            ).ok();
+            self.ctx.fill_text(
+                &format!(
+                    "Progress to next point: {}/{} unique codex entries",
+                    knowledge_progress, knowledge_step
+                ),
+                self.canvas_w / 2.0,
+                box_y + 62.0,
+            ).ok();
+
+            for idx in 0..3 {
+                let y = box_y + 98.0 + idx as f64 * 42.0;
+                let selected = idx == talent_cursor;
+                let rank = talents.rank(idx);
+                let max_rank = TalentTree::max_rank(idx);
+                let pips = format!(
+                    "{}{}",
+                    "●".repeat(rank as usize),
+                    "○".repeat(max_rank.saturating_sub(rank) as usize)
+                );
+                if selected {
+                    self.ctx.set_fill_style_str("rgba(102,221,170,0.14)");
+                    self.ctx.fill_rect(box_x + 16.0, y - 18.0, box_w - 32.0, 30.0);
+                }
+                self.ctx.set_text_align("left");
+                self.ctx.set_fill_style_str(if selected { "#ffdd88" } else { "#ddeeff" });
+                self.ctx.set_font("bold 14px monospace");
+                self.ctx.fill_text(TalentTree::title(idx), box_x + 24.0, y).ok();
+                self.ctx.set_fill_style_str("#99b8c8");
+                self.ctx.set_font("11px monospace");
+                self.ctx.fill_text(TalentTree::description(idx), box_x + 24.0, y + 14.0).ok();
+                self.ctx.set_text_align("right");
+                self.ctx.set_fill_style_str("#88ffcc");
+                self.ctx.set_font("12px monospace");
+                self.ctx
+                    .fill_text(
+                        &format!("{}  {}", talents.bonus_text(idx), pips),
+                        box_x + box_w - 24.0,
+                        y + 6.0,
+                    )
+                    .ok();
+            }
+
+            self.ctx.set_text_align("center");
+            self.ctx.set_fill_style_str("#7784aa");
+            self.ctx.set_font("11px monospace");
+            self.ctx.fill_text(
+                "↑↓ select  Enter=buy rank  Esc/T=close",
+                self.canvas_w / 2.0,
+                box_y + box_h - 16.0,
+            ).ok();
+        }
+    }
+
+    fn draw_room_ambience(
+        &self,
+        room_modifier: Option<crate::dungeon::RoomModifier>,
+        anim_t: f64,
+    ) {
+        match room_modifier {
+            Some(crate::dungeon::RoomModifier::Dark) => {
+                self.ctx.set_fill_style_str("rgba(10,10,22,0.16)");
+                self.ctx.fill_rect(0.0, 0.0, self.canvas_w, self.canvas_h);
+                self.ctx.set_fill_style_str("rgba(150,160,220,0.08)");
+                for i in 0..8 {
+                    let seed = i as f64 * 0.83;
+                    let x = (((anim_t * 0.27) + seed).sin() * 0.5 + 0.5) * self.canvas_w;
+                    let y = (((anim_t * 0.18) + seed * 1.7).cos() * 0.5 + 0.5) * self.canvas_h;
+                    let r = 18.0 + (((anim_t * 0.9) + seed).sin() * 0.5 + 0.5) * 18.0;
+                    self.ctx.begin_path();
+                    self.ctx.arc(x, y, r, 0.0, std::f64::consts::TAU).ok();
+                    self.ctx.fill();
+                }
+            }
+            Some(crate::dungeon::RoomModifier::Arcane) => {
+                for i in 0..14 {
+                    let seed = i as f64 * 1.13;
+                    let x = (((anim_t * 0.41) + seed).sin() * 0.5 + 0.5) * self.canvas_w;
+                    let y = (((anim_t * 0.66) + seed * 0.7).cos() * 0.5 + 0.5) * self.canvas_h;
+                    let alpha = 0.18 + (((anim_t * 2.0) + seed).sin() * 0.5 + 0.5) * 0.16;
+                    let radius = 1.5 + (((anim_t * 1.3) + seed).cos() * 0.5 + 0.5) * 2.5;
+                    self.ctx
+                        .set_fill_style_str(&format!("rgba(180,120,255,{alpha})"));
+                    self.ctx
+                        .set_shadow_color(&format!("rgba(180,120,255,{})", alpha * 1.5));
+                    self.ctx.set_shadow_blur(8.0);
+                    self.ctx.begin_path();
+                    self.ctx.arc(x, y, radius, 0.0, std::f64::consts::TAU).ok();
+                    self.ctx.fill();
+                }
+                self.ctx.set_shadow_blur(0.0);
+                self.ctx.set_shadow_color("transparent");
+            }
+            Some(crate::dungeon::RoomModifier::Cursed) => {
+                self.ctx.set_fill_style_str("rgba(40,0,0,0.08)");
+                self.ctx.fill_rect(0.0, 0.0, self.canvas_w, self.canvas_h);
+                for i in 0..12 {
+                    let seed = i as f64 * 0.69;
+                    let x = (((anim_t * 0.33) + seed).sin() * 0.5 + 0.5) * self.canvas_w;
+                    let y = (((anim_t * 1.2) + seed * 1.9).fract()) * self.canvas_h;
+                    let len = 8.0 + (((anim_t * 1.1) + seed).sin() * 0.5 + 0.5) * 14.0;
+                    self.ctx
+                        .set_stroke_style_str("rgba(255,90,90,0.22)");
+                    self.ctx.set_line_width(1.5);
+                    self.ctx.begin_path();
+                    self.ctx.move_to(x, y);
+                    self.ctx.line_to(x - 2.5, y + len);
+                    self.ctx.stroke();
+                }
+            }
+            None => {}
         }
     }
 
@@ -1263,6 +1663,342 @@ impl Renderer {
             mm_scale + 1.0,
             mm_scale + 1.0,
         );
+    }
+
+    pub fn draw_inventory(
+        &self,
+        player: &Player,
+        floor_num: i32,
+        recipes_found: usize,
+        best_floor: i32,
+        total_kills: u32,
+        companion: Option<crate::game::Companion>,
+        item_labels: &[String],
+    ) {
+        let box_x = 24.0;
+        let box_y = 28.0;
+        let box_w = self.canvas_w - 48.0;
+        let box_h = self.canvas_h - 56.0;
+
+        self.ctx.set_fill_style_str("rgba(0,0,0,0.88)");
+        self.ctx.fill_rect(0.0, 0.0, self.canvas_w, self.canvas_h);
+
+        self.ctx.set_fill_style_str("rgba(18,20,32,0.98)");
+        self.ctx.fill_rect(box_x, box_y, box_w, box_h);
+        self.ctx.set_stroke_style_str("#5e6ea8");
+        self.ctx.set_line_width(2.0);
+        self.ctx.stroke_rect(box_x, box_y, box_w, box_h);
+
+        self.ctx.set_text_align("center");
+        self.ctx.set_font("bold 22px monospace");
+        self.ctx.set_fill_style_str("#ffcc33");
+        self.ctx.fill_text("Inventory", self.canvas_w / 2.0, box_y + 28.0).ok();
+        self.ctx.set_font("11px monospace");
+        self.ctx.set_fill_style_str("#9aaad8");
+        self.ctx.fill_text("Press I or Esc to close", self.canvas_w / 2.0, box_y + 46.0).ok();
+
+        let class_name = match player.class {
+            crate::player::PlayerClass::Scholar => "Scholar",
+            crate::player::PlayerClass::Warrior => "Warrior",
+            crate::player::PlayerClass::Alchemist => "Alchemist",
+        };
+        let companion_text = companion
+            .map(|ally| format!("{} {}", ally.icon(), ally.name()))
+            .unwrap_or_else(|| "No companion".to_string());
+
+        self.ctx.set_font("12px monospace");
+        self.ctx.set_text_align("left");
+        self.ctx.set_fill_style_str("#dde7ff");
+        self.ctx
+            .fill_text(
+                &format!(
+                    "Floor {}   HP {}/{}   Gold {}   Class {}",
+                    floor_num, player.hp, player.max_hp, player.gold, class_name
+                ),
+                box_x + 18.0,
+                box_y + 66.0,
+            )
+            .ok();
+        self.ctx.set_text_align("right");
+        self.ctx
+            .fill_text(&companion_text, box_x + box_w - 18.0, box_y + 66.0)
+            .ok();
+
+        let panel_y = box_y + 82.0;
+        let panel_h = box_h - 110.0;
+        let gap = 16.0;
+        let left_x = box_x + 16.0;
+        let left_w = 232.0;
+        let mid_x = left_x + left_w + gap;
+        let mid_w = 248.0;
+        let right_x = mid_x + mid_w + gap;
+        let right_w = box_x + box_w - 16.0 - right_x;
+
+        self.ctx.set_fill_style_str("rgba(255,255,255,0.03)");
+        self.ctx.fill_rect(left_x, panel_y, left_w, panel_h);
+        self.ctx.fill_rect(mid_x, panel_y, mid_w, panel_h);
+        self.ctx.fill_rect(right_x, panel_y, right_w, panel_h);
+        self.ctx.set_stroke_style_str("#39456c");
+        self.ctx.stroke_rect(left_x, panel_y, left_w, panel_h);
+        self.ctx.stroke_rect(mid_x, panel_y, mid_w, panel_h);
+        self.ctx.stroke_rect(right_x, panel_y, right_w, panel_h);
+
+        self.ctx.set_font("bold 13px monospace");
+        self.ctx.set_text_align("left");
+        self.ctx.set_fill_style_str("#89a3ff");
+        self.ctx.fill_text("Loadout", left_x + 12.0, panel_y + 22.0).ok();
+        self.ctx
+            .fill_text("Spells", mid_x + 12.0, panel_y + 22.0)
+            .ok();
+        self.ctx
+            .fill_text("Radicals & Progress", right_x + 12.0, panel_y + 22.0)
+            .ok();
+
+        let mut left_y = panel_y + 44.0;
+        self.ctx.set_font("11px monospace");
+        self.ctx.set_fill_style_str("#9ab0d7");
+        self.ctx.fill_text("Equipment", left_x + 12.0, left_y).ok();
+        left_y += 18.0;
+        self.ctx.set_fill_style_str("#dde7ff");
+        self.ctx
+            .fill_text(
+                &format!(
+                    "Weapon: {}",
+                    equipment_name(player.weapon, player.enchantments[0])
+                ),
+                left_x + 12.0,
+                left_y,
+            )
+            .ok();
+        left_y += 16.0;
+        self.ctx
+            .fill_text(
+                &format!(
+                    "Armor:  {}",
+                    equipment_name(player.armor, player.enchantments[1])
+                ),
+                left_x + 12.0,
+                left_y,
+            )
+            .ok();
+        left_y += 16.0;
+        self.ctx
+            .fill_text(
+                &format!(
+                    "Charm:  {}",
+                    equipment_name(player.charm, player.enchantments[2])
+                ),
+                left_x + 12.0,
+                left_y,
+            )
+            .ok();
+
+        left_y += 26.0;
+        self.ctx.set_fill_style_str("#9ab0d7");
+        self.ctx.fill_text("Consumables", left_x + 12.0, left_y).ok();
+        left_y += 18.0;
+        self.ctx.set_fill_style_str("#dde7ff");
+        if player.items.is_empty() {
+            self.ctx
+                .fill_text("No consumables picked up yet.", left_x + 12.0, left_y)
+                .ok();
+            left_y += 16.0;
+        } else {
+            for (idx, label) in item_labels.iter().enumerate() {
+                self.ctx
+                    .fill_text(
+                        &format!("{}. {}", idx + 1, label),
+                        left_x + 12.0,
+                        left_y,
+                    )
+                    .ok();
+                left_y += 16.0;
+            }
+        }
+
+        left_y += 10.0;
+        self.ctx.set_fill_style_str("#9ab0d7");
+        self.ctx.fill_text("Active effects", left_x + 12.0, left_y).ok();
+        left_y += 18.0;
+        if player.shield {
+            self.ctx.set_fill_style_str("#7fd8ff");
+            self.ctx
+                .fill_text("🛡 Shield Active", left_x + 12.0, left_y)
+                .ok();
+            left_y += 16.0;
+        }
+        if player.statuses.is_empty() {
+            self.ctx.set_fill_style_str("#dde7ff");
+            self.ctx
+                .fill_text("No temporary effects active.", left_x + 12.0, left_y)
+                .ok();
+        } else {
+            for status in &player.statuses {
+                self.ctx.set_fill_style_str(status.color());
+                self.ctx
+                    .fill_text(
+                        &format!("{} ({} turns)", status.label(), status.turns_left),
+                        left_x + 12.0,
+                        left_y,
+                    )
+                    .ok();
+                left_y += 16.0;
+            }
+        }
+
+        let mut spell_y = panel_y + 44.0;
+        self.ctx.set_font("11px monospace");
+        self.ctx.set_fill_style_str("#9ab0d7");
+        self.ctx
+            .fill_text("Forged characters", mid_x + 12.0, spell_y)
+            .ok();
+        spell_y += 18.0;
+        if player.spells.is_empty() {
+            self.ctx.set_fill_style_str("#dde7ff");
+            self.ctx
+                .fill_text("Forge characters to unlock spells.", mid_x + 12.0, spell_y)
+                .ok();
+        } else {
+            let max_spells = (((panel_h - 70.0) / 38.0) as usize).max(1);
+            for (idx, spell) in player.spells.iter().take(max_spells).enumerate() {
+                let selected = idx == player.selected_spell;
+                if selected {
+                    self.ctx.set_fill_style_str("rgba(255,204,51,0.14)");
+                    self.ctx
+                        .fill_rect(mid_x + 8.0, spell_y - 14.0, mid_w - 16.0, 30.0);
+                }
+                self.ctx.set_font("bold 13px monospace");
+                self.ctx
+                    .set_fill_style_str(if selected { "#ffdd88" } else { "#dde7ff" });
+                let marker = if selected { "►" } else { " " };
+                self.ctx
+                    .fill_text(
+                        &format!("{} {} {}", marker, spell.hanzi, spell.pinyin),
+                        mid_x + 12.0,
+                        spell_y,
+                    )
+                    .ok();
+                spell_y += 14.0;
+                self.ctx.set_font("11px monospace");
+                self.ctx.set_fill_style_str("#9fc2ff");
+                self.ctx
+                    .fill_text(
+                        &format!("{} — {}", spell.effect.label(), spell.meaning),
+                        mid_x + 24.0,
+                        spell_y,
+                    )
+                    .ok();
+                spell_y += 24.0;
+            }
+
+            if player.spells.len() > max_spells {
+                self.ctx.set_font("11px monospace");
+                self.ctx.set_fill_style_str("#7e8dbb");
+                self.ctx
+                    .fill_text(
+                        &format!("...and {} more", player.spells.len() - max_spells),
+                        mid_x + 12.0,
+                        spell_y,
+                    )
+                    .ok();
+            }
+        }
+
+        let mut right_y = panel_y + 44.0;
+        self.ctx.set_font("11px monospace");
+        self.ctx.set_fill_style_str("#dde7ff");
+        self.ctx
+            .fill_text(
+                &format!("Radicals carried: {}", player.radicals.len()),
+                right_x + 12.0,
+                right_y,
+            )
+            .ok();
+        right_y += 16.0;
+        self.ctx
+            .fill_text(
+                &format!("Recipes known: {}", recipes_found),
+                right_x + 12.0,
+                right_y,
+            )
+            .ok();
+        right_y += 16.0;
+        self.ctx
+            .fill_text(
+                &format!("Best floor: {}", best_floor),
+                right_x + 12.0,
+                right_y,
+            )
+            .ok();
+        right_y += 16.0;
+        self.ctx
+            .fill_text(
+                &format!("Total kills: {}", total_kills),
+                right_x + 12.0,
+                right_y,
+            )
+            .ok();
+
+        right_y += 26.0;
+        self.ctx.set_fill_style_str("#9ab0d7");
+        self.ctx
+            .fill_text("Grouped radicals", right_x + 12.0, right_y)
+            .ok();
+        right_y += 18.0;
+
+        let radical_counts = radical_stack_counts(&player.radicals);
+        if radical_counts.is_empty() {
+            self.ctx.set_fill_style_str("#dde7ff");
+            self.ctx
+                .fill_text("No radicals picked up yet.", right_x + 12.0, right_y)
+                .ok();
+        } else {
+            let available_rows = ((panel_y + panel_h - right_y - 16.0) / 16.0).floor() as usize;
+            let rows_per_col = available_rows.max(1);
+            let col_w = (right_w - 24.0) / 2.0;
+            for (idx, (radical, count)) in radical_counts.iter().take(rows_per_col * 2).enumerate() {
+                let col = idx / rows_per_col;
+                let row = idx % rows_per_col;
+                let x = right_x + 12.0 + col as f64 * col_w;
+                let y = right_y + row as f64 * 16.0;
+                self.ctx.set_fill_style_str("#ffb566");
+                self.ctx.set_font("13px 'Noto Serif SC', 'SimSun', serif");
+                self.ctx.fill_text(radical, x, y).ok();
+                self.ctx.set_fill_style_str("#dde7ff");
+                self.ctx.set_font("11px monospace");
+                self.ctx
+                    .fill_text(&format!(" x{}", count), x + 16.0, y)
+                    .ok();
+            }
+
+            if radical_counts.len() > rows_per_col * 2 {
+                self.ctx.set_fill_style_str("#7e8dbb");
+                self.ctx.set_font("11px monospace");
+                self.ctx
+                    .fill_text(
+                        &format!("...and {} more stacks", radical_counts.len() - rows_per_col * 2),
+                        right_x + 12.0,
+                        panel_y + panel_h - 12.0,
+                    )
+                    .ok();
+            }
+        }
+
+        self.ctx.set_text_align("center");
+        self.ctx.set_font("11px monospace");
+        self.ctx.set_fill_style_str("#7784aa");
+        let footer = if item_labels.iter().any(|label| label.starts_with('?')) {
+            "Mystery seals identify themselves on use. Use 1-5 in exploration to test them."
+        } else {
+            "Use 1-5 in exploration to consume items. Selected spell is highlighted here for combat."
+        };
+        self.ctx
+            .fill_text(
+                footer,
+                self.canvas_w / 2.0,
+                box_y + box_h - 16.0,
+            )
+            .ok();
     }
 
     /// Draw the character codex overlay.
@@ -1357,5 +2093,45 @@ impl Renderer {
                 self.canvas_h - 10.0,
             ).ok();
         }
+    }
+}
+
+fn equipment_name(
+    equipment: Option<&crate::player::Equipment>,
+    enchantment: Option<&'static str>,
+) -> String {
+    match (equipment, enchantment) {
+        (Some(equipment), Some(enchantment)) => format!("{} +{}", equipment.name, enchantment),
+        (Some(equipment), None) => equipment.name.to_string(),
+        (None, _) => "None".to_string(),
+    }
+}
+
+fn radical_stack_counts(radicals: &[&'static str]) -> BTreeMap<&'static str, usize> {
+    let mut counts = BTreeMap::new();
+    for radical in radicals {
+        *counts.entry(*radical).or_insert(0) += 1;
+    }
+    counts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::radical_stack_counts;
+
+    #[test]
+    fn radical_stack_counts_groups_duplicate_radicals() {
+        let counts = radical_stack_counts(&["水", "木", "水"]);
+
+        assert_eq!(counts.get("水"), Some(&2));
+        assert_eq!(counts.get("木"), Some(&1));
+        assert_eq!(counts.len(), 2);
+    }
+
+    #[test]
+    fn radical_stack_counts_returns_empty_map_for_empty_inventory() {
+        let counts = radical_stack_counts(&[]);
+
+        assert!(counts.is_empty());
     }
 }

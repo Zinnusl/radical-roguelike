@@ -33,6 +33,38 @@ pub enum EquipEffect {
 }
 
 pub const MAX_ITEMS: usize = 5;
+pub const ITEM_KIND_COUNT: usize = 6;
+pub const MYSTERY_ITEM_APPEARANCES: [&str; ITEM_KIND_COUNT] = [
+    "Vermilion Seal 朱符",
+    "Jade Seal 玉符",
+    "Cloud Seal 云符",
+    "Ink Seal 墨符",
+    "Mirror Seal 镜符",
+    "Storm Seal 雷符",
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ItemKind {
+    HealthPotion,
+    PoisonFlask,
+    RevealScroll,
+    TeleportScroll,
+    HastePotion,
+    StunBomb,
+}
+
+impl ItemKind {
+    pub fn index(self) -> usize {
+        match self {
+            ItemKind::HealthPotion => 0,
+            ItemKind::PoisonFlask => 1,
+            ItemKind::RevealScroll => 2,
+            ItemKind::TeleportScroll => 3,
+            ItemKind::HastePotion => 4,
+            ItemKind::StunBomb => 5,
+        }
+    }
+}
 
 /// Consumable items the player can carry and use.
 #[derive(Clone, Debug)]
@@ -52,6 +84,17 @@ pub enum Item {
 }
 
 impl Item {
+    pub fn kind(&self) -> ItemKind {
+        match self {
+            Item::HealthPotion(_) => ItemKind::HealthPotion,
+            Item::PoisonFlask(_, _) => ItemKind::PoisonFlask,
+            Item::RevealScroll => ItemKind::RevealScroll,
+            Item::TeleportScroll => ItemKind::TeleportScroll,
+            Item::HastePotion(_) => ItemKind::HastePotion,
+            Item::StunBomb => ItemKind::StunBomb,
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Item::HealthPotion(_) => "💚 Health Potion",
@@ -71,6 +114,14 @@ impl Item {
             Item::TeleportScroll => "Teleport",
             Item::HastePotion(_) => "Haste",
             Item::StunBomb => "Stun",
+        }
+    }
+
+    pub fn display_name(&self, identified: bool, appearance: &'static str) -> String {
+        if identified {
+            self.name().to_string()
+        } else {
+            format!("? {}", appearance)
         }
     }
 }
@@ -128,6 +179,10 @@ pub struct Player {
     pub enchantments: [Option<&'static str>; 3],
     /// Bonus damage from tone shrine (used once, then reset)
     pub tone_bonus_damage: i32,
+    /// Permanent shop discount from meta progression (percentage)
+    pub shop_discount_pct: i32,
+    /// Permanent spell potency bonus from meta progression
+    pub spell_power_bonus: i32,
 }
 
 impl Player {
@@ -154,7 +209,23 @@ impl Player {
             charm: None,
             enchantments: [None; 3],
             tone_bonus_damage: 0,
+            shop_discount_pct: 0,
+            spell_power_bonus: 0,
         }
+    }
+
+    pub fn apply_meta_progression(
+        &mut self,
+        starting_hp_bonus: i32,
+        shop_discount_pct: i32,
+        spell_power_bonus: i32,
+    ) {
+        if starting_hp_bonus > 0 {
+            self.max_hp += starting_hp_bonus;
+            self.hp += starting_hp_bonus;
+        }
+        self.shop_discount_pct = shop_discount_pct.max(0);
+        self.spell_power_bonus = spell_power_bonus.max(0);
     }
 
     /// Max items depends on class
@@ -322,5 +393,24 @@ impl Player {
             "目" => 1,
             _ => 0,
         }).sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Item, ItemKind};
+
+    #[test]
+    fn item_kind_matches_variant() {
+        assert_eq!(Item::HealthPotion(5).kind(), ItemKind::HealthPotion);
+        assert_eq!(Item::TeleportScroll.kind(), ItemKind::TeleportScroll);
+    }
+
+    #[test]
+    fn item_display_name_uses_mystery_label_until_identified() {
+        let item = Item::RevealScroll;
+
+        assert_eq!(item.display_name(false, "Cloud Seal 云符"), "? Cloud Seal 云符");
+        assert_eq!(item.display_name(true, "Cloud Seal 云符"), "👁 Reveal Scroll");
     }
 }

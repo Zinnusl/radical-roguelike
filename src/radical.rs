@@ -26,6 +26,8 @@ pub enum SpellEffect {
     FireAoe(i32),
     /// Heal the player
     Heal(i32),
+    /// Reveal the current floor layout
+    Reveal,
     /// Block the next incoming hit
     Shield,
     /// Deal extra damage to current target
@@ -34,6 +36,8 @@ pub enum SpellEffect {
     Drain(i32),
     /// Stun current enemy (skips their next attack)
     Stun,
+    /// Convince a foe to stand down
+    Pacify,
 }
 
 impl SpellEffect {
@@ -41,10 +45,12 @@ impl SpellEffect {
         match self {
             SpellEffect::FireAoe(_) => "🔥 Fire",
             SpellEffect::Heal(_) => "💚 Heal",
+            SpellEffect::Reveal => "👁 Reveal",
             SpellEffect::Shield => "🛡 Shield",
             SpellEffect::StrongHit(_) => "⚔ Strike",
             SpellEffect::Drain(_) => "🩸 Drain",
             SpellEffect::Stun => "⚡ Stun",
+            SpellEffect::Pacify => "☯ Pacify",
         }
     }
 }
@@ -105,7 +111,7 @@ pub const RADICALS: &[Radical] = &[
 
 pub const RECIPES: &[Recipe] = &[
     // ── Fire / AoE ──────────────────────────────────────────────────────────
-    Recipe { inputs: &["日", "月"], output_hanzi: "明", output_pinyin: "míng", output_meaning: "bright/clear", effect: SpellEffect::FireAoe(3) },
+    Recipe { inputs: &["日", "月"], output_hanzi: "明", output_pinyin: "míng", output_meaning: "bright/clear", effect: SpellEffect::Reveal },
     Recipe { inputs: &["雨", "田"], output_hanzi: "雷", output_pinyin: "léi", output_meaning: "thunder", effect: SpellEffect::FireAoe(5) },
     Recipe { inputs: &["火", "虫"], output_hanzi: "烛", output_pinyin: "zhú", output_meaning: "candle/flame", effect: SpellEffect::FireAoe(3) },
     Recipe { inputs: &["口", "鸟"], output_hanzi: "鸣", output_pinyin: "míng", output_meaning: "cry of a bird", effect: SpellEffect::FireAoe(2) },
@@ -132,7 +138,7 @@ pub const RECIPES: &[Recipe] = &[
     // ── Shield / Defense ────────────────────────────────────────────────────
     Recipe { inputs: &["山", "石"], output_hanzi: "岩", output_pinyin: "yán", output_meaning: "rock/cliff", effect: SpellEffect::Shield },
     Recipe { inputs: &["小", "土"], output_hanzi: "尘", output_pinyin: "chén", output_meaning: "dust", effect: SpellEffect::Shield },
-    Recipe { inputs: &["王", "田", "土"], output_hanzi: "理", output_pinyin: "lǐ", output_meaning: "logic/reason", effect: SpellEffect::Shield },
+    Recipe { inputs: &["王", "田", "土"], output_hanzi: "理", output_pinyin: "lǐ", output_meaning: "logic/reason", effect: SpellEffect::Pacify },
     Recipe { inputs: &["口", "王"], output_hanzi: "呈", output_pinyin: "chéng", output_meaning: "to present", effect: SpellEffect::Shield },
     Recipe { inputs: &["土", "人"], output_hanzi: "坐", output_pinyin: "zuò", output_meaning: "to sit", effect: SpellEffect::Shield },
     Recipe { inputs: &["山", "风"], output_hanzi: "岚", output_pinyin: "lán", output_meaning: "mountain mist", effect: SpellEffect::Shield },
@@ -211,4 +217,27 @@ pub fn radicals_for_floor(floor: i32) -> &'static [Radical] {
 /// Get the list of rare radicals (boss drops only).
 pub fn rare_radicals() -> &'static [Radical] {
     &RADICALS[COMMON_RADICAL_COUNT..]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{try_forge, SpellEffect};
+
+    #[test]
+    fn utility_spell_labels_are_stable() {
+        assert_eq!(SpellEffect::Reveal.label(), "👁 Reveal");
+        assert_eq!(SpellEffect::Pacify.label(), "☯ Pacify");
+    }
+
+    #[test]
+    fn verified_utility_recipes_map_to_new_effects() {
+        assert!(matches!(
+            try_forge(&["日", "月"]).map(|recipe| recipe.effect),
+            Some(SpellEffect::Reveal)
+        ));
+        assert!(matches!(
+            try_forge(&["王", "田", "土"]).map(|recipe| recipe.effect),
+            Some(SpellEffect::Pacify)
+        ));
+    }
 }

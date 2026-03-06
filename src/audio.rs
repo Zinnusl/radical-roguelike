@@ -1,7 +1,6 @@
 //! Procedural audio using Web Audio API.
 //! All sounds are synthesized — no audio files needed.
 
-use wasm_bindgen::JsCast;
 use web_sys::{AudioContext, GainNode, OscillatorNode, OscillatorType};
 
 /// Current music mood.
@@ -19,6 +18,10 @@ pub struct Audio {
     music_next: f64,
     /// Current music mood.
     music_mood: MusicMood,
+    /// Music volume as 0.0..1.0 multiplier.
+    music_volume: f32,
+    /// SFX volume as 0.0..1.0 multiplier.
+    sfx_volume: f32,
 }
 
 impl Audio {
@@ -26,6 +29,8 @@ impl Audio {
         AudioContext::new().ok().map(|ctx| Self {
             music_next: 0.0,
             music_mood: MusicMood::Explore,
+            music_volume: 1.0,
+            sfx_volume: 1.0,
             ctx,
         })
     }
@@ -41,6 +46,14 @@ impl Audio {
             self.music_mood = mood;
             self.music_next = 0.0; // trigger immediate phrase
         }
+    }
+
+    pub fn set_music_volume(&mut self, volume_percent: u8) {
+        self.music_volume = (volume_percent.min(100) as f32) / 100.0;
+    }
+
+    pub fn set_sfx_volume(&mut self, volume_percent: u8) {
+        self.sfx_volume = (volume_percent.min(100) as f32) / 100.0;
     }
 
     /// Called from animation loop — plays ambient music phrases.
@@ -79,6 +92,10 @@ impl Audio {
 
     /// Soft ambient pad tone with fade-in and fade-out.
     fn pad(&self, freq: f32, duration: f64, volume: f32) {
+        let volume = volume * self.music_volume;
+        if volume <= 0.0 {
+            return;
+        }
         let osc = match self.ctx.create_oscillator() {
             Ok(o) => o,
             Err(_) => return,
@@ -102,6 +119,10 @@ impl Audio {
 
     /// Low rhythmic pulse.
     fn pulse(&self, freq: f32, duration: f64, volume: f32) {
+        let volume = volume * self.music_volume;
+        if volume <= 0.0 {
+            return;
+        }
         let osc = match self.ctx.create_oscillator() {
             Ok(o) => o,
             Err(_) => return,
@@ -122,6 +143,10 @@ impl Audio {
     }
 
     fn tone(&self, freq: f32, duration: f64, volume: f32, wave: OscillatorType) {
+        let volume = volume * self.sfx_volume;
+        if volume <= 0.0 {
+            return;
+        }
         let osc: OscillatorNode = match self.ctx.create_oscillator() {
             Ok(o) => o,
             Err(_) => return,
@@ -219,6 +244,9 @@ impl Audio {
     /// Play a Chinese tone contour for listening mode.
     /// tone_num: 1-4 (Chinese tones), base_freq ~300 Hz for a natural voice range.
     pub fn play_chinese_tone(&self, tone_num: u8) {
+        if self.sfx_volume <= 0.0 {
+            return;
+        }
         let osc = match self.ctx.create_oscillator() {
             Ok(o) => o,
             Err(_) => return,
@@ -230,8 +258,9 @@ impl Audio {
         osc.set_type(OscillatorType::Sine);
         let now = self.ctx.current_time();
         let dur = 0.5;
-        gain.gain().set_value(0.12);
-        gain.gain().linear_ramp_to_value_at_time(0.12, now + dur - 0.1).ok();
+        let volume = 0.12 * self.sfx_volume;
+        gain.gain().set_value(volume);
+        gain.gain().linear_ramp_to_value_at_time(volume, now + dur - 0.1).ok();
         gain.gain().linear_ramp_to_value_at_time(0.0, now + dur).ok();
 
         match tone_num {

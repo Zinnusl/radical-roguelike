@@ -3,6 +3,32 @@
 use crate::status::StatusInstance;
 use crate::vocab::VocabEntry;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BossKind {
+    Gatekeeper,
+    Scholar,
+    Elementalist,
+}
+
+impl BossKind {
+    pub fn for_floor(floor: i32) -> Option<Self> {
+        match floor {
+            5 => Some(Self::Gatekeeper),
+            10 => Some(Self::Scholar),
+            15 => Some(Self::Elementalist),
+            _ => None,
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Gatekeeper => "Gatekeeper",
+            Self::Scholar => "Scholar",
+            Self::Elementalist => "Elementalist",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Enemy {
     pub x: i32,
@@ -25,6 +51,14 @@ pub struct Enemy {
     pub stunned: bool,
     /// Active status effects
     pub statuses: Vec<StatusInstance>,
+    /// Floor-specific boss mechanics
+    pub boss_kind: Option<BossKind>,
+    /// Tracks one-time boss phase mechanics
+    pub phase_triggered: bool,
+    /// Gatekeeper summon cadence
+    pub summon_cooldown: u8,
+    /// Elementalist resistance remembers the last spell school used
+    pub resisted_spell: Option<&'static str>,
 }
 
 impl Enemy {
@@ -48,13 +82,21 @@ impl Enemy {
             gold_value: gold,
             stunned: false,
             statuses: Vec::new(),
+            boss_kind: None,
+            phase_triggered: false,
+            summon_cooldown: 0,
+            resisted_spell: None,
         }
     }
 
     pub fn boss_from_vocab(entry: &'static VocabEntry, x: i32, y: i32, floor: i32) -> Self {
-        let hp = 8 + floor;
-        let damage = 2 + floor / 2;
-        let gold = 30 + floor * 5;
+        let boss_kind = BossKind::for_floor(floor);
+        let (hp, damage, gold, cooldown) = match boss_kind {
+            Some(BossKind::Gatekeeper) => (16 + floor, 3 + floor / 3, 60 + floor * 5, 1),
+            Some(BossKind::Scholar) => (14 + floor, 3 + floor / 3, 70 + floor * 5, 0),
+            Some(BossKind::Elementalist) => (18 + floor, 4 + floor / 3, 80 + floor * 5, 0),
+            None => (8 + floor, 2 + floor / 2, 30 + floor * 5, 0),
+        };
         Self {
             x,
             y,
@@ -70,6 +112,10 @@ impl Enemy {
             gold_value: gold,
             stunned: false,
             statuses: Vec::new(),
+            boss_kind,
+            phase_triggered: false,
+            summon_cooldown: cooldown,
+            resisted_spell: None,
         }
     }
 
@@ -94,5 +140,34 @@ impl Enemy {
             }
             (self.x + dx, self.y)
         }
+    }
+
+    pub fn boss_trait_text(&self) -> Option<String> {
+        match self.boss_kind {
+            Some(BossKind::Gatekeeper) => Some("Summons 门 wards when cornered".to_string()),
+            Some(BossKind::Scholar) => Some(if self.phase_triggered {
+                "Sentence duel spent".to_string()
+            } else {
+                "Triggers a sentence duel at half HP".to_string()
+            }),
+            Some(BossKind::Elementalist) => Some(match self.resisted_spell {
+                Some(school) => format!("Resists last spell: {}", school),
+                None => "Adapts to the last spell you cast".to_string(),
+            }),
+            None => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BossKind;
+
+    #[test]
+    fn boss_kind_matches_key_floors() {
+        assert_eq!(BossKind::for_floor(5), Some(BossKind::Gatekeeper));
+        assert_eq!(BossKind::for_floor(10), Some(BossKind::Scholar));
+        assert_eq!(BossKind::for_floor(15), Some(BossKind::Elementalist));
+        assert_eq!(BossKind::for_floor(20), None);
     }
 }

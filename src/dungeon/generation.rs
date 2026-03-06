@@ -32,6 +32,39 @@ impl Rng {
 // ── Tile types ──────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AltarKind {
+    Jade,
+    Gale,
+    Mirror,
+}
+
+impl AltarKind {
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Jade => "☯",
+            Self::Gale => "✦",
+            Self::Mirror => "◈",
+        }
+    }
+
+    pub fn color(self) -> &'static str {
+        match self {
+            Self::Jade => "#66dd99",
+            Self::Gale => "#88ccff",
+            Self::Mirror => "#ddb8ff",
+        }
+    }
+
+    fn random(rng: &mut Rng) -> Self {
+        match rng.next_u64() % 3 {
+            0 => Self::Jade,
+            1 => Self::Gale,
+            _ => Self::Mirror,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tile {
     Wall,
     Floor,
@@ -40,15 +73,42 @@ pub enum Tile {
     Forge,
     Shop,
     Chest,
+    /// Smashable crate with supplies or traps
+    Crate,
+    /// NetHack-style spike trap
+    Spikes,
+    /// Slick oil that can be ignited by fire magic
+    Oil,
+    /// Water that conducts stunning spells
+    Water,
     /// NPC companion (0=Teacher, 1=Monk, 2=Merchant, 3=Guard)
     Npc(u8),
     /// Tone shrine for tone battle mini-game
     Shrine,
+    /// One-shot altar that grants a blessing
+    Altar(AltarKind),
+    /// Tutorial signpost with a scripted message
+    Sign(u8),
 }
 
 impl Tile {
     pub fn is_walkable(self) -> bool {
-        matches!(self, Tile::Floor | Tile::Corridor | Tile::StairsDown | Tile::Forge | Tile::Shop | Tile::Chest | Tile::Npc(_) | Tile::Shrine)
+        matches!(
+            self,
+            Tile::Floor
+                | Tile::Corridor
+                | Tile::StairsDown
+                | Tile::Forge
+                | Tile::Shop
+                | Tile::Chest
+                | Tile::Spikes
+                | Tile::Oil
+                | Tile::Water
+                | Tile::Npc(_)
+                | Tile::Shrine
+                | Tile::Altar(_)
+                | Tile::Sign(_)
+        )
     }
 }
 
@@ -331,12 +391,196 @@ impl DungeonLevel {
         }
     }
 
+    /// Place hazard tiles inspired by classic roguelikes.
+    pub fn place_hazards(&mut self, rng: &mut Rng) {
+        if self.rooms.len() < 4 {
+            return;
+        }
+
+        let hazard_rooms = 1 + (rng.next_u64() % 2) as usize;
+        for _ in 0..hazard_rooms {
+            for _ in 0..20 {
+                let pick = rng.range(1, self.rooms.len() as i32 - 1) as usize;
+                let room = &self.rooms[pick];
+                let has_special = (room.y..room.y + room.h).any(|ry| {
+                    (room.x..room.x + room.w).any(|rx| {
+                        if rx >= 0 && ry >= 0 && rx < self.width && ry < self.height {
+                            let idx = (ry * self.width + rx) as usize;
+                            matches!(
+                                self.tiles[idx],
+                                Tile::Forge
+                                    | Tile::Shop
+                                    | Tile::StairsDown
+                                    | Tile::Chest
+                                    | Tile::Npc(_)
+                                    | Tile::Shrine
+                                    | Tile::Altar(_)
+                                    | Tile::Sign(_)
+                            )
+                        } else {
+                            false
+                        }
+                    })
+                });
+                if has_special {
+                    continue;
+                }
+
+                let hazard_count = rng.range(2, 5);
+                let mut placed = 0;
+                for _ in 0..16 {
+                    let hx = rng.range(room.x + 1, room.x + room.w - 1);
+                    let hy = rng.range(room.y + 1, room.y + room.h - 1);
+                    if !self.in_bounds(hx, hy) {
+                        continue;
+                    }
+                    let idx = self.idx(hx, hy);
+                    if self.tiles[idx] != Tile::Floor {
+                        continue;
+                    }
+                    self.tiles[idx] = match rng.next_u64() % 3 {
+                        0 => Tile::Spikes,
+                        1 => Tile::Oil,
+                        _ => Tile::Water,
+                    };
+                    placed += 1;
+                    if placed >= hazard_count {
+                        break;
+                    }
+                }
+                if placed > 0 {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Place smashable crates with supplies or trap gas.
+    pub fn place_crates(&mut self, rng: &mut Rng) {
+        if self.rooms.len() < 4 {
+            return;
+        }
+
+        let crate_rooms = 1 + (rng.next_u64() % 2) as usize;
+        for _ in 0..crate_rooms {
+            for _ in 0..20 {
+                let pick = rng.range(1, self.rooms.len() as i32 - 1) as usize;
+                let room = &self.rooms[pick];
+                let has_special = (room.y..room.y + room.h).any(|ry| {
+                    (room.x..room.x + room.w).any(|rx| {
+                        if rx >= 0 && ry >= 0 && rx < self.width && ry < self.height {
+                            let idx = (ry * self.width + rx) as usize;
+                            matches!(
+                                self.tiles[idx],
+                                Tile::Forge
+                                    | Tile::Shop
+                                    | Tile::StairsDown
+                                    | Tile::Chest
+                                    | Tile::Npc(_)
+                                    | Tile::Shrine
+                                    | Tile::Altar(_)
+                                    | Tile::Sign(_)
+                            )
+                        } else {
+                            false
+                        }
+                    })
+                });
+                if has_special {
+                    continue;
+                }
+
+                let crate_count = rng.range(1, 3);
+                let mut placed = 0;
+                for _ in 0..12 {
+                    let cx = rng.range(room.x + 1, room.x + room.w - 1);
+                    let cy = rng.range(room.y + 1, room.y + room.h - 1);
+                    if !self.in_bounds(cx, cy) {
+                        continue;
+                    }
+                    let idx = self.idx(cx, cy);
+                    if self.tiles[idx] != Tile::Floor {
+                        continue;
+                    }
+                    self.tiles[idx] = Tile::Crate;
+                    placed += 1;
+                    if placed >= crate_count {
+                        break;
+                    }
+                }
+                if placed > 0 {
+                    break;
+                }
+            }
+        }
+    }
+
     /// Get player start position (center of first room).
     pub fn start_pos(&self) -> (i32, i32) {
         self.rooms
             .first()
             .map(|r| r.center())
             .unwrap_or((1, 1))
+    }
+
+    /// Scripted tutorial floor used on the first run.
+    pub fn tutorial(width: i32, height: i32) -> Self {
+        debug_assert!(width >= 44 && height >= 30, "tutorial floor expects the default map size");
+
+        let size = (width * height) as usize;
+        let mut level = DungeonLevel {
+            width,
+            height,
+            tiles: vec![Tile::Wall; size],
+            rooms: vec![
+                Room { x: 4, y: 18, w: 9, h: 9, modifier: None },
+                Room { x: 16, y: 18, w: 9, h: 9, modifier: None },
+                Room { x: 29, y: 18, w: 13, h: 9, modifier: None },
+            ],
+            visible: vec![false; size],
+            revealed: vec![false; size],
+        };
+
+        fn carve_room(level: &mut DungeonLevel, room: &Room) {
+            for ry in room.y..room.y + room.h {
+                for rx in room.x..room.x + room.w {
+                    let idx = level.idx(rx, ry);
+                    level.tiles[idx] = Tile::Floor;
+                }
+            }
+        }
+
+        fn carve_h_corridor(level: &mut DungeonLevel, x1: i32, x2: i32, y: i32) {
+            for x in x1.min(x2)..=x1.max(x2) {
+                let idx = level.idx(x, y);
+                if level.tiles[idx] == Tile::Wall {
+                    level.tiles[idx] = Tile::Corridor;
+                }
+            }
+        }
+
+        let rooms = level.rooms.clone();
+        for room in &rooms {
+            carve_room(&mut level, room);
+        }
+
+        carve_h_corridor(&mut level, 13, 15, 22);
+        carve_h_corridor(&mut level, 25, 28, 22);
+
+        let sign0 = level.idx(8, 20);
+        let sign1 = level.idx(13, 22);
+        let sign2 = level.idx(30, 20);
+        let sign3 = level.idx(38, 20);
+        let forge = level.idx(32, 22);
+        let stairs = level.idx(39, 22);
+        level.tiles[sign0] = Tile::Sign(0);
+        level.tiles[sign1] = Tile::Sign(1);
+        level.tiles[sign2] = Tile::Sign(2);
+        level.tiles[sign3] = Tile::Sign(3);
+        level.tiles[forge] = Tile::Forge;
+        level.tiles[stairs] = Tile::StairsDown;
+
+        level
     }
 
     pub fn generate(width: i32, height: i32, seed: u64) -> Self {
@@ -441,6 +685,9 @@ impl DungeonLevel {
         level.assign_room_modifiers(&mut rng);
         level.place_npcs(&mut rng);
         level.place_shrines(&mut rng);
+        level.place_altars(&mut rng);
+        level.place_hazards(&mut rng);
+        level.place_crates(&mut rng);
         level
     }
 
@@ -489,5 +736,121 @@ impl DungeonLevel {
         if self.tiles[idx] == Tile::Floor {
             self.tiles[idx] = Tile::Shrine;
         }
+    }
+
+    /// Place a blessing altar in a quiet side room (~35% chance).
+    fn place_altars(&mut self, rng: &mut Rng) {
+        let n = self.rooms.len();
+        if n <= 3 {
+            return;
+        }
+        if rng.next_u64() % 100 >= 35 {
+            return;
+        }
+        for _ in 0..12 {
+            let room_idx = 1 + (rng.next_u64() as usize % (n - 2));
+            let room = &self.rooms[room_idx];
+            let has_special = (room.y..room.y + room.h).any(|ry| {
+                (room.x..room.x + room.w).any(|rx| {
+                    if rx >= 0 && ry >= 0 && rx < self.width && ry < self.height {
+                        let idx = (ry * self.width + rx) as usize;
+                        matches!(
+                            self.tiles[idx],
+                            Tile::Forge
+                                | Tile::Shop
+                                | Tile::StairsDown
+                                | Tile::Chest
+                                | Tile::Npc(_)
+                                | Tile::Shrine
+                                | Tile::Altar(_)
+                                | Tile::Sign(_)
+                        )
+                    } else {
+                        false
+                    }
+                })
+            });
+            if has_special {
+                continue;
+            }
+
+            let ax = room.x + room.w / 2;
+            let ay = room.y + room.h / 2;
+            if !self.in_bounds(ax, ay) {
+                continue;
+            }
+            let idx = self.idx(ax, ay);
+            if self.tiles[idx] == Tile::Floor {
+                self.tiles[idx] = Tile::Altar(AltarKind::random(rng));
+                return;
+            }
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{AltarKind, DungeonLevel, Room, Rng, Tile};
+
+    fn make_clean_test_level() -> DungeonLevel {
+        let width = 24;
+        let height = 24;
+        let mut level = DungeonLevel {
+            width,
+            height,
+            tiles: vec![Tile::Wall; (width * height) as usize],
+            rooms: vec![
+                Room { x: 1, y: 1, w: 5, h: 5, modifier: None },
+                Room { x: 8, y: 1, w: 5, h: 5, modifier: None },
+                Room { x: 15, y: 1, w: 5, h: 5, modifier: None },
+                Room { x: 1, y: 10, w: 5, h: 5, modifier: None },
+                Room { x: 8, y: 10, w: 5, h: 5, modifier: None },
+            ],
+            visible: vec![false; (width * height) as usize],
+            revealed: vec![false; (width * height) as usize],
+        };
+        for room in level.rooms.clone() {
+            for y in room.y..room.y + room.h {
+                for x in room.x..room.x + room.w {
+                    let idx = level.idx(x, y);
+                    level.tiles[idx] = Tile::Floor;
+                }
+            }
+        }
+        level
+    }
+
+    #[test]
+    fn hazards_and_altars_are_walkable_but_crates_block() {
+        assert!(Tile::Spikes.is_walkable());
+        assert!(Tile::Oil.is_walkable());
+        assert!(Tile::Water.is_walkable());
+        assert!(Tile::Altar(AltarKind::Jade).is_walkable());
+        assert!(!Tile::Crate.is_walkable());
+    }
+
+    #[test]
+    fn place_altars_adds_a_blessing_site_to_clean_levels() {
+        let mut level = make_clean_test_level();
+        let mut rng = Rng::new(2);
+
+        level.place_altars(&mut rng);
+
+        assert!(level.tiles.iter().any(|tile| matches!(tile, Tile::Altar(_))));
+    }
+
+    #[test]
+    fn tutorial_floor_has_required_landmarks() {
+        let level = DungeonLevel::tutorial(48, 48);
+
+        assert_eq!(level.start_pos(), (8, 22));
+        assert!(level.tiles.iter().any(|tile| matches!(tile, Tile::Sign(0))));
+        assert!(level.tiles.iter().any(|tile| matches!(tile, Tile::Sign(1))));
+        assert!(level.tiles.iter().any(|tile| matches!(tile, Tile::Sign(2))));
+        assert!(level.tiles.iter().any(|tile| matches!(tile, Tile::Sign(3))));
+        assert!(level.tiles.iter().any(|tile| *tile == Tile::Forge));
+        assert!(level.tiles.iter().any(|tile| *tile == Tile::StairsDown));
+        assert!(level.is_walkable(8, 20));
     }
 }

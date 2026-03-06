@@ -9,10 +9,12 @@ use web_sys::{window, HtmlCanvasElement, KeyboardEvent};
 use crate::achievement::AchievementTracker;
 use crate::audio::Audio;
 use crate::codex::Codex;
-use crate::dungeon::{compute_fov, DungeonLevel, RoomModifier, Tile};
-use crate::enemy::Enemy;
+use crate::dungeon::{compute_fov, AltarKind, DungeonLevel, RoomModifier, Tile};
+use crate::enemy::{BossKind, Enemy};
 use crate::particle::ParticleSystem;
-use crate::player::{Player, PlayerClass, EQUIPMENT_POOL};
+use crate::player::{
+    ItemKind, Player, PlayerClass, ITEM_KIND_COUNT, MYSTERY_ITEM_APPEARANCES, EQUIPMENT_POOL,
+};
 use crate::radical::{self, Spell, SpellEffect};
 use crate::render::Renderer;
 use crate::srs::SrsTracker;
@@ -93,6 +95,205 @@ impl Quest {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct TutorialState {
+    combat_done: bool,
+    forge_done: bool,
+}
+
+impl TutorialState {
+    fn is_complete(&self) -> bool {
+        self.combat_done && self.forge_done
+    }
+
+    fn objective_text(&self) -> &'static str {
+        if !self.combat_done {
+            "Tutorial: defeat 大 by typing da4."
+        } else if !self.forge_done {
+            "Tutorial: forge 好 from 女 + 子 at the anvil."
+        } else {
+            "Tutorial complete: take the stairs to Floor 1."
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextSpeed {
+    Slow,
+    Normal,
+    Fast,
+}
+
+impl TextSpeed {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Slow => "Slow",
+            Self::Normal => "Normal",
+            Self::Fast => "Fast",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Slow => Self::Normal,
+            Self::Normal => Self::Fast,
+            Self::Fast => Self::Fast,
+        }
+    }
+
+    fn previous(self) -> Self {
+        match self {
+            Self::Slow => Self::Slow,
+            Self::Normal => Self::Slow,
+            Self::Fast => Self::Normal,
+        }
+    }
+
+    fn timer_step(self) -> u8 {
+        match self {
+            Self::Slow => 1,
+            Self::Normal => 1,
+            Self::Fast => 2,
+        }
+    }
+
+    fn timer_delay(self) -> u8 {
+        match self {
+            Self::Slow => 2,
+            Self::Normal => 1,
+            Self::Fast => 1,
+        }
+    }
+
+    fn from_storage(value: &str) -> Self {
+        match value {
+            "slow" => Self::Slow,
+            "fast" => Self::Fast,
+            _ => Self::Normal,
+        }
+    }
+
+    fn storage_key(self) -> &'static str {
+        match self {
+            Self::Slow => "slow",
+            Self::Normal => "normal",
+            Self::Fast => "fast",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GameSettings {
+    pub music_volume: u8,
+    pub sfx_volume: u8,
+    pub screen_shake: bool,
+    pub text_speed: TextSpeed,
+}
+
+impl Default for GameSettings {
+    fn default() -> Self {
+        Self {
+            music_volume: 100,
+            sfx_volume: 100,
+            screen_shake: true,
+            text_speed: TextSpeed::Normal,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct TalentTree {
+    pub jade_heart: u8,
+    pub haggler_ink: u8,
+    pub spell_echo: u8,
+}
+
+impl TalentTree {
+    pub fn spent_points(self) -> i32 {
+        self.jade_heart as i32 + self.haggler_ink as i32 + self.spell_echo as i32
+    }
+
+    pub fn starting_hp_bonus(self) -> i32 {
+        self.jade_heart as i32
+    }
+
+    pub fn shop_discount_pct(self) -> i32 {
+        self.haggler_ink as i32 * 5
+    }
+
+    pub fn spell_power_bonus(self) -> i32 {
+        self.spell_echo as i32
+    }
+
+    pub fn rank(self, idx: usize) -> u8 {
+        match idx {
+            0 => self.jade_heart,
+            1 => self.haggler_ink,
+            2 => self.spell_echo,
+            _ => 0,
+        }
+    }
+
+    pub fn max_rank(idx: usize) -> u8 {
+        match idx {
+            0 => 5,
+            1 => 4,
+            2 => 5,
+            _ => 0,
+        }
+    }
+
+    pub fn title(idx: usize) -> &'static str {
+        match idx {
+            0 => "Jade Heart",
+            1 => "Haggler's Ink",
+            2 => "Spell Echo",
+            _ => "",
+        }
+    }
+
+    pub fn description(idx: usize) -> &'static str {
+        match idx {
+            0 => "+1 starting HP per rank",
+            1 => "-5% shop costs per rank",
+            2 => "+1 spell heal/damage per rank",
+            _ => "",
+        }
+    }
+
+    pub fn bonus_text(self, idx: usize) -> String {
+        match idx {
+            0 => format!("+{} HP", self.starting_hp_bonus()),
+            1 => format!("-{}% prices", self.shop_discount_pct()),
+            2 => format!("+{} power", self.spell_power_bonus()),
+            _ => String::new(),
+        }
+    }
+
+    pub fn can_upgrade(self, idx: usize) -> bool {
+        self.rank(idx) < Self::max_rank(idx)
+    }
+
+    pub fn upgrade(&mut self, idx: usize) -> bool {
+        if !self.can_upgrade(idx) {
+            return false;
+        }
+        match idx {
+            0 => self.jade_heart += 1,
+            1 => self.haggler_ink += 1,
+            2 => self.spell_echo += 1,
+            _ => return false,
+        }
+        true
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum SentenceChallengeMode {
+    BonusGold { reward: i32 },
+    ScholarTrial { boss_idx: usize, success_damage: i32, failure_heal: i32 },
+}
+
 #[derive(Clone, Debug)]
 pub enum CombatState {
     /// Normal exploration — no active fight
@@ -149,6 +350,8 @@ pub enum CombatState {
         arranged: Vec<usize>,
         /// Translation/meaning
         meaning: &'static str,
+        /// What this challenge resolves into
+        mode: SentenceChallengeMode,
     },
 }
 
@@ -193,6 +396,7 @@ pub struct GameState {
     pub typing: String,
     pub message: String,
     pub message_timer: u8,
+    message_tick_delay: u8,
     pub discovered_recipes: Vec<usize>,
     pub best_floor: i32,
     pub srs: SrsTracker,
@@ -214,6 +418,15 @@ pub struct GameState {
     pub codex: Codex,
     /// Whether codex overlay is showing
     pub show_codex: bool,
+    pub show_inventory: bool,
+    item_appearance_order: [usize; ITEM_KIND_COUNT],
+    identified_items: [bool; ITEM_KIND_COUNT],
+    pub settings: GameSettings,
+    pub show_settings: bool,
+    pub settings_cursor: usize,
+    pub talents: TalentTree,
+    pub show_talent_tree: bool,
+    pub talent_cursor: usize,
     /// Last spell effect used (for combos)
     pub last_spell: Option<SpellEffect>,
     /// Turns since last spell (combo window)
@@ -230,6 +443,8 @@ pub struct GameState {
     pub daily_mode: bool,
     /// Endless mode (continue past floor 20)
     pub endless_mode: bool,
+    /// Active scripted tutorial state for first-time players
+    tutorial: Option<TutorialState>,
     rng_state: u64,
 }
 
@@ -250,6 +465,180 @@ impl GameState {
         x
     }
 
+    fn trigger_shake(&mut self, frames: u8) {
+        if self.settings.screen_shake {
+            self.shake_timer = self.shake_timer.max(frames);
+        }
+    }
+
+    fn open_settings(&mut self) {
+        self.show_settings = true;
+        self.settings_cursor = 0;
+    }
+
+    fn close_settings(&mut self) {
+        self.show_settings = false;
+    }
+
+    fn open_inventory(&mut self) {
+        self.show_inventory = true;
+    }
+
+    fn close_inventory(&mut self) {
+        self.show_inventory = false;
+    }
+
+    fn move_settings_cursor(&mut self, delta: i32) {
+        let next = (self.settings_cursor as i32 + delta).clamp(0, 3);
+        self.settings_cursor = next as usize;
+    }
+
+    fn adjust_volume(value: u8, delta: i8) -> u8 {
+        (value as i16 + delta as i16 * 10).clamp(0, 100) as u8
+    }
+
+    fn adjust_selected_setting(&mut self, delta: i8) {
+        match self.settings_cursor {
+            0 => self.settings.music_volume = Self::adjust_volume(self.settings.music_volume, delta),
+            1 => self.settings.sfx_volume = Self::adjust_volume(self.settings.sfx_volume, delta),
+            2 => self.settings.screen_shake = !self.settings.screen_shake,
+            3 => {
+                self.settings.text_speed = if delta < 0 {
+                    self.settings.text_speed.previous()
+                } else {
+                    self.settings.text_speed.next()
+                };
+            }
+            _ => {}
+        }
+        self.apply_settings();
+    }
+
+    fn apply_settings(&mut self) {
+        if !self.settings.screen_shake {
+            self.shake_timer = 0;
+        }
+        if let Some(ref mut audio) = self.audio {
+            audio.set_music_volume(self.settings.music_volume);
+            audio.set_sfx_volume(self.settings.sfx_volume);
+        }
+        self.save_settings();
+    }
+
+    fn open_talent_tree(&mut self) {
+        self.show_talent_tree = true;
+        self.talent_cursor = 0;
+    }
+
+    fn close_talent_tree(&mut self) {
+        self.show_talent_tree = false;
+    }
+
+    fn move_talent_cursor(&mut self, delta: i32) {
+        let next = (self.talent_cursor as i32 + delta).clamp(0, 2);
+        self.talent_cursor = next as usize;
+    }
+
+    fn knowledge_points_total(&self) -> i32 {
+        (self.codex.total_unique() / 5) as i32
+    }
+
+    fn knowledge_points_available(&self) -> i32 {
+        (self.knowledge_points_total() - self.talents.spent_points()).max(0)
+    }
+
+    fn knowledge_progress(&self) -> (usize, usize) {
+        let unique = self.codex.total_unique();
+        let step = 5;
+        (unique % step, step)
+    }
+
+    fn purchase_selected_talent(&mut self) {
+        if self.knowledge_points_available() <= 0 {
+            self.message = "Need more codex discoveries to earn Knowledge Points.".to_string();
+            self.message_timer = 120;
+            return;
+        }
+        if self.talents.upgrade(self.talent_cursor) {
+            self.save_talents();
+            self.message = format!(
+                "Talent learned: {} ({})",
+                TalentTree::title(self.talent_cursor),
+                self.talents.bonus_text(self.talent_cursor)
+            );
+            self.message_timer = 140;
+        } else {
+            self.message = format!("{} is already fully mastered.", TalentTree::title(self.talent_cursor));
+            self.message_timer = 100;
+        }
+    }
+
+    fn make_player(&self, x: i32, y: i32, class: PlayerClass, use_meta: bool) -> Player {
+        let mut player = Player::new(x, y, class);
+        if use_meta {
+            player.apply_meta_progression(
+                self.talents.starting_hp_bonus(),
+                self.talents.shop_discount_pct(),
+                self.talents.spell_power_bonus(),
+            );
+        }
+        player
+    }
+
+    fn effective_shop_discount_pct(&self) -> i32 {
+        let mut discount = self.player.shop_discount_pct;
+        if self.companion == Some(Companion::Merchant) {
+            discount += 20;
+        }
+        discount.clamp(0, 50)
+    }
+
+    fn discounted_cost(&self, base_cost: i32) -> i32 {
+        let pct = 100 - self.effective_shop_discount_pct();
+        ((base_cost * pct).max(0) + 99) / 100
+    }
+
+    fn roll_item_appearance_order(seed: u64) -> [usize; ITEM_KIND_COUNT] {
+        let mut order = core::array::from_fn(|idx| idx);
+        let mut state = seed ^ 0x9e37_79b9_7f4a_7c15;
+        for i in (1..ITEM_KIND_COUNT).rev() {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let j = (state as usize) % (i + 1);
+            order.swap(i, j);
+        }
+        order
+    }
+
+    fn reset_item_lore(&mut self) {
+        self.identified_items = [false; ITEM_KIND_COUNT];
+        self.item_appearance_order = Self::roll_item_appearance_order(self.seed);
+    }
+
+    fn item_appearance(&self, kind: ItemKind) -> &'static str {
+        MYSTERY_ITEM_APPEARANCES[self.item_appearance_order[kind.index()]]
+    }
+
+    fn item_is_identified(&self, kind: ItemKind) -> bool {
+        self.identified_items[kind.index()]
+    }
+
+    fn item_display_name(&self, item: &crate::player::Item) -> String {
+        item.display_name(self.item_is_identified(item.kind()), self.item_appearance(item.kind()))
+    }
+
+    fn identify_item_kind(&mut self, kind: ItemKind) -> bool {
+        let idx = kind.index();
+        let newly_identified = !self.identified_items[idx];
+        self.identified_items[idx] = true;
+        newly_identified
+    }
+
+    fn vocab_entry_by_hanzi(hanzi: &str) -> Option<&'static VocabEntry> {
+        vocab::VOCAB.iter().find(|entry| entry.hanzi == hanzi)
+    }
+
     fn spawn_enemies(&mut self) {
         let pool = vocab::vocab_for_floor(self.floor_num);
         if pool.is_empty() {
@@ -265,8 +654,15 @@ impl GameState {
             }
             // Boss in second-to-last room on boss floors
             if is_boss_floor && i == rooms.len() - 2 {
-                let entry_idx = self.rng_next() as usize % pool.len();
-                let entry: &'static VocabEntry = pool[entry_idx];
+                let entry: &'static VocabEntry = match BossKind::for_floor(self.floor_num) {
+                    Some(BossKind::Gatekeeper) => Self::vocab_entry_by_hanzi("门")
+                        .unwrap_or(pool[self.rng_next() as usize % pool.len()]),
+                    Some(BossKind::Scholar) => Self::vocab_entry_by_hanzi("学")
+                        .unwrap_or(pool[self.rng_next() as usize % pool.len()]),
+                    Some(BossKind::Elementalist) => Self::vocab_entry_by_hanzi("电")
+                        .unwrap_or(pool[self.rng_next() as usize % pool.len()]),
+                    None => pool[self.rng_next() as usize % pool.len()],
+                };
                 let (cx, cy) = room.center();
                 self.enemies.push(Enemy::boss_from_vocab(entry, cx, cy, self.floor_num));
                 continue;
@@ -284,11 +680,403 @@ impl GameState {
         }
     }
 
+    fn start_tutorial(&mut self, class: PlayerClass) {
+        self.floor_num = 0;
+        self.level = DungeonLevel::tutorial(MAP_W, MAP_H);
+        let (sx, sy) = self.level.start_pos();
+        self.player = self.make_player(sx, sy, class, true);
+        self.reset_item_lore();
+        self.player.add_radical("女");
+        self.player.add_radical("子");
+        self.enemies.clear();
+
+        let enemy_room = &self.level.rooms[1];
+        let entry = vocab::VOCAB
+            .iter()
+            .find(|entry| entry.hanzi == "大")
+            .unwrap_or(&vocab::VOCAB[0]);
+        let mut enemy = Enemy::from_vocab(entry, enemy_room.x, enemy_room.y + enemy_room.h / 2, 1);
+        enemy.gold_value = 0;
+        self.enemies.push(enemy);
+
+        self.combat = CombatState::Explore;
+        self.typing.clear();
+        self.message = "Tutorial Floor — read the signs, defeat 大, then forge 好 from 女 + 子.".to_string();
+        self.message_timer = 220;
+        self.tutorial = Some(TutorialState::default());
+
+        let (px, py) = (self.player.x, self.player.y);
+        compute_fov(&mut self.level, px, py, FOV_RADIUS);
+    }
+
+    fn show_tutorial_sign(&mut self, sign_id: u8) {
+        let text = match (sign_id, self.tutorial.as_ref()) {
+            (0, _) => "Move with WASD or arrow keys. Walk onto signs to read tips.",
+            (1, _) => "Combat: bump into 大, type da4, then press Enter to attack.",
+            (2, Some(tutorial)) if !tutorial.combat_done => {
+                "Beat the enemy first. Then use the forge with 女 + 子."
+            }
+            (2, _) => "Forge: stand on ⚒, press 1, 2, then Enter to make 好 (hao3).",
+            (3, Some(tutorial)) if !tutorial.is_complete() => {
+                "The stairs stay sealed until you defeat 大 and forge one spell."
+            }
+            (3, _) => "The stairs are open. Step on ▼ to begin Floor 1.",
+            _ => return,
+        };
+        self.message = text.to_string();
+        self.message_timer = 220;
+    }
+
+    fn tutorial_hint(&self) -> Option<&'static str> {
+        self.tutorial.as_ref().map(TutorialState::objective_text)
+    }
+
+    fn tutorial_exit_blocker(&self) -> Option<&'static str> {
+        tutorial_exit_blocker_for(self.tutorial.as_ref())
+    }
+
+    fn descend_floor(&mut self, force_skip: bool) -> bool {
+        if !force_skip {
+            if let Some(blocker) = self.tutorial_exit_blocker() {
+                self.message = blocker.to_string();
+                self.message_timer = 150;
+                return false;
+            }
+        }
+
+        let leaving_tutorial = self.tutorial.is_some();
+        if leaving_tutorial {
+            self.tutorial = None;
+        }
+        self.new_floor();
+
+        if leaving_tutorial {
+            self.message = if force_skip {
+                "⏭ Tutorial skipped. Welcome to Floor 1.".to_string()
+            } else {
+                "Tutorial complete! Welcome to Floor 1.".to_string()
+            };
+            self.message_timer = 180;
+        } else if force_skip {
+            self.message = format!("⏭ Test skip — descended to Floor {}.", self.floor_num);
+            self.message_timer = 90;
+        }
+
+        true
+    }
+
+    fn reveal_entire_floor(&mut self) {
+        for revealed in self.level.revealed.iter_mut() {
+            *revealed = true;
+        }
+    }
+
+    fn pacify_gold_reward(base_gold: i32, spell_power: i32) -> i32 {
+        ((base_gold + 1) / 2).max(4) + spell_power.max(0)
+    }
+
+    fn invoke_altar(&mut self, x: i32, y: i32, kind: AltarKind) {
+        let idx = self.level.idx(x, y);
+        self.level.tiles[idx] = Tile::Floor;
+        if let Some(ref audio) = self.audio {
+            audio.play_spell();
+        }
+        let (sx, sy) = self.tile_to_screen(x, y);
+        match kind {
+            AltarKind::Jade => {
+                self.player
+                    .statuses
+                    .retain(|status| !matches!(status.kind, status::StatusKind::Regen { .. }));
+                self.player.statuses.push(status::StatusInstance::new(
+                    status::StatusKind::Regen { heal: 1 },
+                    6,
+                ));
+                self.particles.spawn_heal(sx, sy, &mut self.rng_state);
+                self.flash = Some((70, 210, 120, 0.16));
+                self.message =
+                    "☯ Jade altar blessing — regenerate 1 HP per move for 6 turns.".to_string();
+            }
+            AltarKind::Gale => {
+                self.player
+                    .statuses
+                    .retain(|status| !matches!(status.kind, status::StatusKind::Haste));
+                self.player
+                    .statuses
+                    .push(status::StatusInstance::new(status::StatusKind::Haste, 6));
+                self.particles.spawn_teleport(sx, sy, &mut self.rng_state);
+                self.flash = Some((110, 190, 255, 0.14));
+                self.message =
+                    "✦ Gale altar blessing — haste quickens your steps for 6 turns.".to_string();
+            }
+            AltarKind::Mirror => {
+                self.player
+                    .statuses
+                    .retain(|status| !matches!(status.kind, status::StatusKind::Revealed));
+                self.player
+                    .statuses
+                    .push(status::StatusInstance::new(status::StatusKind::Revealed, 4));
+                self.reveal_entire_floor();
+                self.particles.spawn_shield(sx, sy, &mut self.rng_state);
+                self.flash = Some((180, 130, 255, 0.18));
+                self.message =
+                    "◈ Mirror altar blessing — hidden paths shimmer into view.".to_string();
+            }
+        }
+        self.message_timer = 100;
+    }
+
+    fn begin_sentence_challenge(&mut self, mode: SentenceChallengeMode, intro: String) {
+        let sent_idx = self.rng_next() as usize % SENTENCES.len();
+        let (words, meaning) = SENTENCES[sent_idx];
+        let mut tiles: Vec<usize> = (0..words.len()).collect();
+        for i in (1..tiles.len()).rev() {
+            let j = self.rng_next() as usize % (i + 1);
+            tiles.swap(i, j);
+        }
+        self.combat = CombatState::SentenceChallenge {
+            tiles,
+            words: words.to_vec(),
+            cursor: 0,
+            arranged: Vec::new(),
+            meaning,
+            mode,
+        };
+        self.message = intro;
+        self.message_timer = 150;
+    }
+
+    fn maybe_trigger_boss_phase(&mut self, enemy_idx: usize) -> bool {
+        if enemy_idx >= self.enemies.len() || !self.enemies[enemy_idx].is_alive() {
+            return false;
+        }
+        if self.enemies[enemy_idx].boss_kind == Some(BossKind::Scholar)
+            && !self.enemies[enemy_idx].phase_triggered
+            && self.enemies[enemy_idx].hp <= self.enemies[enemy_idx].max_hp / 2
+        {
+            self.enemies[enemy_idx].phase_triggered = true;
+            self.begin_sentence_challenge(
+                SentenceChallengeMode::ScholarTrial {
+                    boss_idx: enemy_idx,
+                    success_damage: 6 + self.floor_num / 2,
+                    failure_heal: 3 + self.floor_num / 5,
+                },
+                "📜 The Scholar conjures a syntax duel! Arrange the sentence to break the ward.".to_string(),
+            );
+            return true;
+        }
+        false
+    }
+
+    fn find_free_adjacent_tile(&self, x: i32, y: i32) -> Option<(i32, i32)> {
+        let dirs = [
+            (0, -1),
+            (1, 0),
+            (0, 1),
+            (-1, 0),
+            (1, -1),
+            (1, 1),
+            (-1, 1),
+            (-1, -1),
+        ];
+        dirs.iter().copied().find(|(dx, dy)| {
+            let nx = x + dx;
+            let ny = y + dy;
+            self.level.is_walkable(nx, ny)
+                && self.enemy_at(nx, ny).is_none()
+                && (nx != self.player.x || ny != self.player.y)
+        })
+    }
+
+    fn apply_player_tile_effect(&mut self, tile: Tile) {
+        match tile {
+            Tile::Spikes => {
+                let dmg = (1 + self.floor_num.max(1) / 3).max(1);
+                self.player.hp -= dmg;
+                if let Some(ref audio) = self.audio { audio.play_damage(); }
+                let (sx, sy) = self.tile_to_screen(self.player.x, self.player.y);
+                self.particles.spawn_damage(sx, sy, &mut self.rng_state);
+                self.trigger_shake(6);
+                self.flash = Some((255, 60, 60, 0.2));
+                self.message = format!("🪤 Spikes jab you for {} damage!", dmg);
+                self.message_timer = 70;
+                if self.player.hp <= 0 {
+                    self.player.hp = 0;
+                    self.combat = CombatState::GameOver;
+                    if let Some(ref audio) = self.audio { audio.play_death(); }
+                    self.save_high_score();
+                }
+            }
+            Tile::Oil => {
+                self.message = "🛢 Oil slick — fire magic will ignite nearby puddles.".to_string();
+                self.message_timer = 60;
+            }
+            Tile::Water => {
+                self.message = "≈ Shallow water — stunning magic can arc through it.".to_string();
+                self.message_timer = 60;
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_enemy_tile_effect(&mut self, enemy_idx: usize) {
+        if enemy_idx >= self.enemies.len() || !self.enemies[enemy_idx].is_alive() {
+            return;
+        }
+        let tile = self.level.tile(self.enemies[enemy_idx].x, self.enemies[enemy_idx].y);
+        if tile == Tile::Spikes {
+            self.enemies[enemy_idx].hp -= 1;
+            if self.enemies[enemy_idx].hp <= 0 {
+                let e_hanzi = self.enemies[enemy_idx].hanzi;
+                let idx = self.level.idx(self.enemies[enemy_idx].x, self.enemies[enemy_idx].y);
+                if self.level.visible[idx] {
+                    self.message = format!("🪤 {} stumbles into spikes and falls!", e_hanzi);
+                    self.message_timer = 60;
+                }
+            }
+        }
+    }
+
+    fn ignite_visible_oil(&mut self, bonus_dmg: i32) -> (usize, usize, usize) {
+        let mut oil_tiles = Vec::new();
+        let mut oil_screens = Vec::new();
+        for y in 0..self.level.height {
+            for x in 0..self.level.width {
+                let idx = self.level.idx(x, y);
+                if self.level.visible[idx] && self.level.tiles[idx] == Tile::Oil {
+                    oil_tiles.push((x, y));
+                    oil_screens.push(self.tile_to_screen(x, y));
+                }
+            }
+        }
+        for &(x, y) in &oil_tiles {
+            let idx = self.level.idx(x, y);
+            self.level.tiles[idx] = Tile::Floor;
+        }
+        for (sx, sy) in oil_screens {
+            self.particles.spawn_fire(sx, sy, &mut self.rng_state);
+        }
+
+        let mut scorched = 0;
+        let mut kills = 0;
+        for enemy in &mut self.enemies {
+            if !enemy.is_alive() {
+                continue;
+            }
+            let hit = oil_tiles
+                .iter()
+                .any(|&(ox, oy)| (enemy.x - ox).abs() <= 1 && (enemy.y - oy).abs() <= 1);
+            if hit {
+                enemy.hp -= bonus_dmg;
+                scorched += 1;
+                if enemy.hp <= 0 {
+                    kills += 1;
+                }
+            }
+        }
+
+        (oil_tiles.len(), scorched, kills)
+    }
+
+    fn electrify_visible_water(&mut self, bonus_dmg: i32) -> (usize, usize, usize) {
+        let mut water_tiles = Vec::new();
+        let mut water_screens = Vec::new();
+        for y in 0..self.level.height {
+            for x in 0..self.level.width {
+                let idx = self.level.idx(x, y);
+                if self.level.visible[idx] && self.level.tiles[idx] == Tile::Water {
+                    water_tiles.push((x, y));
+                    water_screens.push(self.tile_to_screen(x, y));
+                }
+            }
+        }
+        for (sx, sy) in water_screens {
+            self.particles.spawn_stun(sx, sy, &mut self.rng_state);
+        }
+
+        let mut shocked = 0;
+        let mut kills = 0;
+        for enemy in &mut self.enemies {
+            if !enemy.is_alive() {
+                continue;
+            }
+            let standing_in_water = water_tiles
+                .iter()
+                .any(|&(wx, wy)| enemy.x == wx && enemy.y == wy);
+            if standing_in_water {
+                enemy.stunned = true;
+                if bonus_dmg > 0 {
+                    enemy.hp -= bonus_dmg;
+                    if enemy.hp <= 0 {
+                        kills += 1;
+                    }
+                }
+                shocked += 1;
+            }
+        }
+
+        (water_tiles.len(), shocked, kills)
+    }
+
+    fn smash_crate(&mut self, cx: i32, cy: i32) {
+        let idx = self.level.idx(cx, cy);
+        if self.level.tiles[idx] != Tile::Crate {
+            return;
+        }
+
+        let (sx, sy) = self.tile_to_screen(cx, cy);
+        self.particles.spawn_chest(sx, sy, &mut self.rng_state);
+        self.level.tiles[idx] = Tile::Floor;
+
+        let roll = self.rng_next() % 100;
+        if roll < 50 {
+            match self.rng_next() % 3 {
+                0 => {
+                    let item = self.random_item();
+                    let name = self.item_display_name(&item);
+                    if self.player.add_item(item) {
+                        self.message = format!("▣ Crate smashed open — found {}!", name);
+                        self.achievements.check_items(self.player.items.len());
+                    } else {
+                        self.message = "▣ Crate held supplies, but your item pack is full.".to_string();
+                    }
+                }
+                1 => {
+                    let gold = 6 + (self.rng_next() % 10) as i32 + self.floor_num.max(1);
+                    self.player.gold += gold;
+                    self.message = format!("▣ Hidden stash! +{}g", gold);
+                }
+                _ => {
+                    let available = radical::radicals_for_floor(self.floor_num.max(1));
+                    let drop_idx = self.rng_next() as usize % available.len();
+                    let dropped = available[drop_idx].ch;
+                    self.player.add_radical(dropped);
+                    self.message = format!("▣ Splinters reveal radical [{}]!", dropped);
+                }
+            }
+        } else if roll < 75 {
+            self.message = "▣ The crate bursts into splinters. Nothing useful inside.".to_string();
+        } else if self.rng_next() % 2 == 0 {
+            self.player.statuses.push(status::StatusInstance::new(
+                status::StatusKind::Poison { damage: 1 },
+                4,
+            ));
+            self.message = "▣ Poison gas! You cough and feel sick.".to_string();
+        } else {
+            self.player.statuses.push(status::StatusInstance::new(
+                status::StatusKind::Confused,
+                4,
+            ));
+            self.message = "▣ Strange glyph-dust swirls around you. Movement becomes scrambled!".to_string();
+        }
+        self.message_timer = 80;
+    }
+
     fn new_floor(&mut self) {
         if let Some(ref audio) = self.audio { audio.play_descend(); }
         crate::srs::save_srs(&self.srs);
         self.codex.save();
         self.floor_num += 1;
+        self.tutorial = None;
         if self.floor_num > self.best_floor {
             self.best_floor = self.floor_num;
         }
@@ -400,11 +1188,27 @@ impl GameState {
 
         // If map-reveal status active, reveal all tiles
         if status::has_revealed(&self.player.statuses) {
-            for r in self.level.revealed.iter_mut() { *r = true; }
+            self.reveal_entire_floor();
         }
 
         let (nx, ny) = self.player.intended_move(dx, dy);
-        if !self.level.is_walkable(nx, ny) {
+        let target_tile = self.level.tile(nx, ny);
+        if target_tile == Tile::Crate {
+            self.smash_crate(nx, ny);
+            if matches!(self.combat, CombatState::GameOver) {
+                return;
+            }
+            self.move_count += 1;
+            let skip_enemy = status::has_haste(&self.player.statuses) && self.move_count % 2 == 0;
+            if !skip_enemy {
+                self.enemy_turn();
+            }
+            let (px, py) = (self.player.x, self.player.y);
+            let fov = self.effective_fov();
+            compute_fov(&mut self.level, px, py, fov);
+            return;
+        }
+        if !target_tile.is_walkable() {
             return;
         }
 
@@ -434,17 +1238,29 @@ impl GameState {
             return;
         }
 
+        if target_tile == Tile::StairsDown {
+            if let Some(blocker) = self.tutorial_exit_blocker() {
+                self.message = blocker.to_string();
+                self.message_timer = 150;
+                return;
+            }
+        }
+
         self.player.move_to(nx, ny);
         if let Some(ref audio) = self.audio { audio.play_step(); }
 
+        if let Tile::Sign(sign_id) = target_tile {
+            self.show_tutorial_sign(sign_id);
+        }
+
         // Stairs
-        if self.level.tile(nx, ny) == Tile::StairsDown {
-            self.new_floor();
+        if target_tile == Tile::StairsDown {
+            self.descend_floor(false);
             return;
         }
 
         // Forge workbench
-        if self.level.tile(nx, ny) == Tile::Forge {
+        if target_tile == Tile::Forge {
             if self.player.radicals.is_empty() {
                 self.message = "Forge workbench — but you have no radicals!".to_string();
                 self.message_timer = 60;
@@ -462,7 +1278,7 @@ impl GameState {
         }
 
         // Shop
-        if self.level.tile(nx, ny) == Tile::Shop {
+        if target_tile == Tile::Shop {
             let items = self.generate_shop_items();
             self.combat = CombatState::Shopping { items, cursor: 0 };
             self.message = "Welcome to the shop! ↑↓ to browse, Enter to buy, Esc to leave.".to_string();
@@ -473,12 +1289,12 @@ impl GameState {
         }
 
         // Chest
-        if self.level.tile(nx, ny) == Tile::Chest {
+        if target_tile == Tile::Chest {
             self.open_chest(nx, ny);
         }
 
         // NPC companion recruit or quest
-        if let Tile::Npc(npc_type) = self.level.tile(nx, ny) {
+        if let Tile::Npc(npc_type) = target_tile {
             let comp = match npc_type {
                 0 => Companion::Teacher,
                 1 => Companion::Monk,
@@ -503,11 +1319,20 @@ impl GameState {
             self.level.tiles[idx] = Tile::Floor;
         }
 
+        if let Tile::Altar(kind) = target_tile {
+            self.invoke_altar(nx, ny, kind);
+        }
+
         // Tone shrine interaction
-        if self.level.tile(nx, ny) == Tile::Shrine {
+        if target_tile == Tile::Shrine {
             self.start_tone_battle();
             let idx = self.level.idx(nx, ny);
             self.level.tiles[idx] = Tile::Floor;
+            return;
+        }
+
+        self.apply_player_tile_effect(target_tile);
+        if matches!(self.combat, CombatState::GameOver) {
             return;
         }
 
@@ -527,6 +1352,8 @@ impl GameState {
     fn enemy_turn(&mut self) {
         let px = self.player.x;
         let py = self.player.y;
+        let mut summons = Vec::new();
+        let mut summon_message = None;
 
         for i in 0..self.enemies.len() {
             if !self.enemies[i].is_alive() {
@@ -544,6 +1371,40 @@ impl GameState {
             }
             if !self.enemies[i].alert {
                 continue;
+            }
+
+            if self.enemies[i].boss_kind == Some(BossKind::Gatekeeper) {
+                if self.enemies[i].summon_cooldown > 0 {
+                    self.enemies[i].summon_cooldown -= 1;
+                }
+                let nearby_minions = self
+                    .enemies
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, e)| {
+                        *j != i
+                            && e.is_alive()
+                            && !e.is_boss
+                            && (e.x - self.enemies[i].x).abs() <= 1
+                            && (e.y - self.enemies[i].y).abs() <= 1
+                    })
+                    .count();
+                if nearby_minions < 2 && self.enemies[i].summon_cooldown == 0 {
+                    if let Some((sx, sy)) = self.find_free_adjacent_tile(self.enemies[i].x, self.enemies[i].y) {
+                        let entry = Self::vocab_entry_by_hanzi("门")
+                            .or_else(|| Self::vocab_entry_by_hanzi("人"))
+                            .unwrap_or(&vocab::VOCAB[0]);
+                        let mut ward = Enemy::from_vocab(entry, sx, sy, self.floor_num.max(2));
+                        ward.alert = true;
+                        ward.gold_value += 4;
+                        summons.push(ward);
+                        self.enemies[i].summon_cooldown = 3;
+                        let visible_idx = self.level.idx(self.enemies[i].x, self.enemies[i].y);
+                        if self.level.visible[visible_idx] {
+                            summon_message = Some("🚪 The Gatekeeper summons a warding spirit!".to_string());
+                        }
+                    }
+                }
             }
 
             let (nx, ny) = self.enemies[i].step_toward(px, py);
@@ -564,7 +1425,7 @@ impl GameState {
             if nx == px && ny == py {
                 if !matches!(self.combat, CombatState::Fighting { .. }) {
                     // Shake on enemy engagement
-                    self.shake_timer = 4;
+                    self.trigger_shake(4);
                     self.combat = CombatState::Fighting {
                         enemy_idx: i,
                         timer_ms: 0.0,
@@ -581,6 +1442,15 @@ impl GameState {
 
             self.enemies[i].x = nx;
             self.enemies[i].y = ny;
+            self.apply_enemy_tile_effect(i);
+        }
+
+        if !summons.is_empty() {
+            self.enemies.extend(summons);
+            if let Some(message) = summon_message {
+                self.message = message;
+                self.message_timer = 90;
+            }
         }
     }
 
@@ -695,8 +1565,14 @@ impl GameState {
                         }
                     }
                     self.message_timer = 80;
-                    // Tutorial hint: first radical collected
-                    if self.total_runs == 0 && self.player.radicals.len() == 1 {
+                    // Tutorial hint: first tutorial fight complete
+                    if let Some(tutorial) = self.tutorial.as_mut() {
+                        if !tutorial.combat_done {
+                            tutorial.combat_done = true;
+                            self.message = "Great! Now walk to the ⚒ and forge 好 from 女 + 子.".to_string();
+                            self.message_timer = 180;
+                        }
+                    } else if self.total_runs == 0 && self.player.radicals.len() == 1 {
                         self.message = format!(
                             "Defeated {}! +{}g [{}] — Walk to an ⚒ anvil to forge spells!",
                             e_hanzi, e_gold, dropped
@@ -713,31 +1589,25 @@ impl GameState {
                     if e_is_elite { self.achievements.unlock("first_elite"); }
                     if e_is_boss { self.achievements.unlock("first_boss"); }
 
-                    // Boss phase 2: sentence challenge
-                    if e_is_boss && self.floor_num >= 5 {
-                        let sent_idx = self.rng_next() as usize % SENTENCES.len();
-                        let (words, meaning) = SENTENCES[sent_idx];
-                        let mut tiles: Vec<usize> = (0..words.len()).collect();
-                        // Shuffle tiles
-                        for i in (1..tiles.len()).rev() {
-                            let j = self.rng_next() as usize % (i + 1);
-                            tiles.swap(i, j);
-                        }
-                        self.combat = CombatState::SentenceChallenge {
-                            tiles,
-                            words: words.to_vec(),
-                            cursor: 0,
-                            arranged: Vec::new(),
-                            meaning,
-                        };
-                        self.message = "Boss Phase 2! Arrange the words in correct order. ←→ to select, Enter to pick.".to_string();
-                        self.message_timer = 150;
+                    // Boss bonus sentence challenge
+                    if e_is_boss
+                        && self.floor_num >= 5
+                        && self.enemies[enemy_idx].boss_kind != Some(BossKind::Scholar)
+                    {
+                        self.begin_sentence_challenge(
+                            SentenceChallengeMode::BonusGold { reward: 30 },
+                            "Boss Phase 2! Arrange the words in correct order. ←→ to select, Enter to pick.".to_string(),
+                        );
                     }
 
                     // Quest progress: kill tracking
                     self.advance_kill_quests();
                 } else {
                     if let Some(ref audio) = self.audio { audio.play_hit(); }
+                    if self.maybe_trigger_boss_phase(enemy_idx) {
+                        self.typing.clear();
+                        return;
+                    }
                     self.message = format!("Hit for {}! {} HP left", hit_dmg, self.enemies[enemy_idx].hp);
                     self.message_timer = 40;
                 }
@@ -767,7 +1637,7 @@ impl GameState {
                     // Damage particles + shake
                     let (sx, sy) = self.tile_to_screen(self.player.x, self.player.y);
                     self.particles.spawn_damage(sx, sy, &mut self.rng_state);
-                    self.shake_timer = 8;
+                    self.trigger_shake(8);
                     self.flash = Some((255, 50, 50, 0.25));
                     self.message = format!(
                         "Wrong! It was \"{}\". {} hits for {}!",
@@ -850,13 +1720,25 @@ impl GameState {
             );
             self.message_timer = 80;
             self.player.add_spell(spell);
+            let forge_quest_message = self.advance_forge_quests(recipe.output_hanzi);
             // Tutorial hint: first spell forged
-            if self.total_runs == 0 && self.player.spells.len() == 1 {
+            if let Some(tutorial) = self.tutorial.as_mut() {
+                tutorial.forge_done = true;
+                self.message = format!(
+                    "Forged {}! Tutorial complete — Tab selects spells, Space casts. Take the stairs to Floor 1.",
+                    recipe.output_hanzi
+                );
+                self.message_timer = 220;
+            } else if self.total_runs == 0 && self.player.spells.len() == 1 {
                 self.message = format!(
                     "Forged {}! In combat: Tab to select spell, Space to cast!",
                     recipe.output_hanzi
                 );
                 self.message_timer = 160;
+            }
+            if let Some(quest_message) = forge_quest_message {
+                self.message = format!("{}  {}", self.message, quest_message);
+                self.message_timer = self.message_timer.max(120);
             }
             // Consume radicals (remove in reverse order to avoid index shifting)
             let mut to_remove: Vec<usize> = selected.clone();
@@ -895,6 +1777,34 @@ impl GameState {
             }
         }
         self.collect_quest_rewards();
+    }
+
+    /// Complete forge-character quests when the requested hanzi is created.
+    fn advance_forge_quests(&mut self, forged_hanzi: &'static str) -> Option<String> {
+        let mut reward_messages = Vec::new();
+        for q in &mut self.quests {
+            if q.completed {
+                continue;
+            }
+            if let QuestGoal::ForgeCharacter(target) = q.goal {
+                if target == forged_hanzi {
+                    q.completed = true;
+                    if q.gold_reward > 0 {
+                        self.player.gold += q.gold_reward;
+                        reward_messages.push(format!(
+                            "Quest complete: {}! +{}g",
+                            q.description, q.gold_reward
+                        ));
+                        q.gold_reward = 0;
+                    }
+                }
+            }
+        }
+        if reward_messages.is_empty() {
+            None
+        } else {
+            Some(reward_messages.join(" "))
+        }
     }
 
     /// Check floor-based quests.
@@ -952,10 +1862,22 @@ impl GameState {
         (entry.hanzi, tone)
     }
 
+    fn forge_quest_candidates_for_floor(floor: i32) -> Vec<&'static radical::Recipe> {
+        let available = radical::radicals_for_floor(floor.max(1));
+        radical::RECIPES
+            .iter()
+            .filter(|recipe| {
+                recipe.inputs.iter().all(|input| {
+                    available.iter().any(|radical| radical.ch == *input)
+                })
+            })
+            .collect()
+    }
+
     /// Generate a random quest.
     fn generate_quest(&mut self) -> Quest {
         let floor = self.floor_num;
-        match self.rng_next() % 3 {
+        match self.rng_next() % 4 {
             0 => {
                 let target = 3 + (floor / 3) as i32;
                 Quest {
@@ -974,13 +1896,36 @@ impl GameState {
                     completed: false,
                 }
             }
-            _ => {
+            2 => {
                 let target = 3 + (floor / 2) as i32;
                 Quest {
                     description: format!("Collect {} radicals", target),
                     goal: QuestGoal::CollectRadicals(0, target),
                     gold_reward: 12 + floor * 3,
                     completed: false,
+                }
+            }
+            _ => {
+                let candidates = Self::forge_quest_candidates_for_floor(floor);
+                if candidates.is_empty() {
+                    let target = 3 + (floor / 2) as i32;
+                    Quest {
+                        description: format!("Collect {} radicals", target),
+                        goal: QuestGoal::CollectRadicals(0, target),
+                        gold_reward: 12 + floor * 3,
+                        completed: false,
+                    }
+                } else {
+                    let recipe = candidates[self.rng_next() as usize % candidates.len()];
+                    Quest {
+                        description: format!(
+                            "Forge {} ({})",
+                            recipe.output_hanzi, recipe.output_meaning
+                        ),
+                        goal: QuestGoal::ForgeCharacter(recipe.output_hanzi),
+                        gold_reward: 18 + floor * 4,
+                        completed: false,
+                    }
                 }
             }
         }
@@ -1019,7 +1964,7 @@ impl GameState {
 
         // Offer 1 random consumable item
         let consumable = self.random_item();
-        let cname = consumable.name().to_string();
+        let cname = self.item_display_name(&consumable);
         items.push(ShopItem {
             label: cname,
             cost: 12 + self.floor_num * 2,
@@ -1034,12 +1979,7 @@ impl GameState {
         if let CombatState::Shopping { ref items, cursor } = self.combat.clone() {
             if cursor >= items.len() { return; }
             let item = &items[cursor];
-            // Merchant companion: 20% discount
-            let effective_cost = if self.companion == Some(Companion::Merchant) {
-                (item.cost as f32 * 0.8).ceil() as i32
-            } else {
-                item.cost
-            };
+            let effective_cost = self.discounted_cost(item.cost);
             if self.player.gold < effective_cost {
                 self.message = format!("Not enough gold! Need {} (have {})", effective_cost, self.player.gold);
                 self.message_timer = 40;
@@ -1062,12 +2002,12 @@ impl GameState {
                     self.message = format!("Equipped {}!", eq.name);
                 }
                 ShopItemKind::Consumable(consumable) => {
-                    let name = consumable.name().to_string();
+                    let name = self.item_display_name(consumable);
                     if self.player.add_item(consumable.clone()) {
                         self.message = format!("Bought {}!", name);
                     } else {
                         self.message = "Item inventory full!".to_string();
-                        self.player.gold += item.cost; // refund
+                        self.player.gold += effective_cost; // refund
                     }
                 }
             }
@@ -1090,26 +2030,64 @@ impl GameState {
                 if let Some(ref audio) = self.audio { audio.play_spell(); }
                 // Arcane room doubles spell damage
                 let arcane_mult = if self.current_room_modifier() == Some(RoomModifier::Arcane) { 2 } else { 1 };
+                let spell_power = self.player.spell_power_bonus;
+                let current_effect = spell.effect;
+                let spell_school = match current_effect {
+                    SpellEffect::FireAoe(_) => Some("Fire"),
+                    SpellEffect::StrongHit(_) => Some("Strike"),
+                    SpellEffect::Drain(_) => Some("Drain"),
+                    SpellEffect::Stun => Some("Stun"),
+                    SpellEffect::Heal(_)
+                    | SpellEffect::Reveal
+                    | SpellEffect::Shield
+                    | SpellEffect::Pacify => None,
+                };
+                let elementalist_resisted = enemy_idx < self.enemies.len()
+                    && self.enemies[enemy_idx].boss_kind == Some(BossKind::Elementalist)
+                    && spell_school.is_some()
+                    && self.enemies[enemy_idx].resisted_spell == spell_school;
                 match spell.effect {
                     SpellEffect::FireAoe(dmg) => {
-                        let dmg = dmg * arcane_mult;
+                        let dmg = dmg * arcane_mult + spell_power;
                         // Fire particles at player position (AoE emanates from player)
                         self.particles.spawn_fire(p_screen.0, p_screen.1, &mut self.rng_state);
                         // Damage all visible enemies
                         let mut killed = 0;
-                        for e in &mut self.enemies {
+                        let mut boss_resisted = false;
+                        for (idx, e) in self.enemies.iter_mut().enumerate() {
                             if e.is_alive() {
                                 let eidx = self.level.idx(e.x, e.y);
                                 if self.level.visible[eidx] {
-                                    e.hp -= dmg;
+                                    let applied_dmg = if idx == enemy_idx && elementalist_resisted {
+                                        boss_resisted = true;
+                                        (dmg / 2).max(1)
+                                    } else {
+                                        dmg
+                                    };
+                                    e.hp -= applied_dmg;
                                     if e.hp <= 0 { killed += 1; }
                                 }
                             }
                         }
-                        self.message = format!(
-                            "{}🔥 {} deals {} damage to all! ({} defeated)",
-                            spell.hanzi, spell.meaning, dmg, killed
-                        );
+                        let oil_bonus = (1 + self.floor_num.max(1) / 4).max(1) + spell_power;
+                        let (oil_tiles, scorched, oil_kills) = self.ignite_visible_oil(oil_bonus);
+                        killed += oil_kills;
+                        let resist_text = if boss_resisted {
+                            " The Elementalist dampens the repeated fire spell!"
+                        } else {
+                            ""
+                        };
+                        self.message = if oil_tiles > 0 {
+                            format!(
+                                "{}🔥 {} deals {} damage to all! Oil ignites on {} tiles and scorches {} foes! ({} defeated){}",
+                                spell.hanzi, spell.meaning, dmg, oil_tiles, scorched, killed, resist_text
+                            )
+                        } else {
+                            format!(
+                                "{}🔥 {} deals {} damage to all! ({} defeated){}",
+                                spell.hanzi, spell.meaning, dmg, killed, resist_text
+                            )
+                        };
                         self.message_timer = 80;
                         // If the fought enemy died, return to explore
                         if enemy_idx < self.enemies.len() && !self.enemies[enemy_idx].is_alive() {
@@ -1118,7 +2096,7 @@ impl GameState {
                         }
                     }
                     SpellEffect::Heal(amount) => {
-                        let amount = amount * arcane_mult;
+                        let amount = amount * arcane_mult + spell_power;
                         self.player.hp = (self.player.hp + amount).min(self.player.max_hp);
                         self.particles.spawn_heal(p_screen.0, p_screen.1, &mut self.rng_state);
                         self.flash = Some((60, 220, 80, 0.2));
@@ -1127,6 +2105,17 @@ impl GameState {
                             spell.hanzi, amount, self.player.hp, self.player.max_hp
                         );
                         self.message_timer = 60;
+                    }
+                    SpellEffect::Reveal => {
+                        self.reveal_entire_floor();
+                        self.particles
+                            .spawn_teleport(p_screen.0, p_screen.1, &mut self.rng_state);
+                        self.flash = Some((100, 210, 255, 0.18));
+                        self.message = format!(
+                            "{}👁 The dungeon's paths blaze into focus. Floor map revealed!",
+                            spell.hanzi
+                        );
+                        self.message_timer = 70;
                     }
                     SpellEffect::Shield => {
                         self.player.shield = true;
@@ -1138,57 +2127,100 @@ impl GameState {
                         self.message_timer = 60;
                     }
                     SpellEffect::StrongHit(dmg) => {
-                        let dmg = dmg * arcane_mult;
+                        let dmg = dmg * arcane_mult + spell_power;
                         if enemy_idx < self.enemies.len() {
                             if let Some((ex, ey)) = e_screen {
                                 self.particles.spawn_kill(ex, ey, &mut self.rng_state);
                             }
-                            self.enemies[enemy_idx].hp -= dmg;
+                            let applied_dmg = if elementalist_resisted {
+                                (dmg / 2).max(1)
+                            } else {
+                                dmg
+                            };
+                            self.enemies[enemy_idx].hp -= applied_dmg;
                             let e_hanzi = self.enemies[enemy_idx].hanzi;
                             if self.enemies[enemy_idx].hp <= 0 {
                                 let available = radical::radicals_for_floor(self.floor_num);
                                 let drop_idx = self.rng_next() as usize % available.len();
                                 self.player.add_radical(available[drop_idx].ch);
                                 self.message = format!(
-                                    "{}⚔ Devastating {} damage! Defeated {}! Got [{}]",
-                                    spell.hanzi, dmg, e_hanzi, available[drop_idx].ch
+                                    "{}⚔ Devastating {} damage! Defeated {}! Got [{}]{}",
+                                    spell.hanzi,
+                                    applied_dmg,
+                                    e_hanzi,
+                                    available[drop_idx].ch,
+                                    if elementalist_resisted {
+                                        " (partially resisted)"
+                                    } else {
+                                        ""
+                                    }
                                 );
                                 self.message_timer = 80;
                                 self.combat = CombatState::Explore;
                                 self.typing.clear();
                             } else {
                                 self.message = format!(
-                                    "{}⚔ {} damage to {}! ({} HP left)",
-                                    spell.hanzi, dmg, e_hanzi, self.enemies[enemy_idx].hp
+                                    "{}⚔ {} damage to {}! ({} HP left){}",
+                                    spell.hanzi,
+                                    applied_dmg,
+                                    e_hanzi,
+                                    self.enemies[enemy_idx].hp,
+                                    if elementalist_resisted {
+                                        " The Elementalist resists the repeated school."
+                                    } else {
+                                        ""
+                                    }
                                 );
                                 self.message_timer = 60;
                             }
                         }
                     }
                     SpellEffect::Drain(dmg) => {
-                        let dmg = dmg * arcane_mult;
+                        let dmg = dmg * arcane_mult + spell_power;
                         if enemy_idx < self.enemies.len() {
                             if let Some((ex, ey)) = e_screen {
                                 self.particles.spawn_drain(ex, ey, &mut self.rng_state);
                             }
-                            self.enemies[enemy_idx].hp -= dmg;
-                            self.player.hp = (self.player.hp + dmg).min(self.player.max_hp);
+                            let applied_dmg = if elementalist_resisted {
+                                (dmg / 2).max(1)
+                            } else {
+                                dmg
+                            };
+                            self.enemies[enemy_idx].hp -= applied_dmg;
+                            self.player.hp = (self.player.hp + applied_dmg).min(self.player.max_hp);
                             let e_hanzi = self.enemies[enemy_idx].hanzi;
                             if self.enemies[enemy_idx].hp <= 0 {
                                 let available = radical::radicals_for_floor(self.floor_num);
                                 let drop_idx = self.rng_next() as usize % available.len();
                                 self.player.add_radical(available[drop_idx].ch);
                                 self.message = format!(
-                                    "{}🩸 Drained {} HP from {}! Defeated! Got [{}]",
-                                    spell.hanzi, dmg, e_hanzi, available[drop_idx].ch
+                                    "{}🩸 Drained {} HP from {}! Defeated! Got [{}]{}",
+                                    spell.hanzi,
+                                    applied_dmg,
+                                    e_hanzi,
+                                    available[drop_idx].ch,
+                                    if elementalist_resisted {
+                                        " (partially resisted)"
+                                    } else {
+                                        ""
+                                    }
                                 );
                                 self.message_timer = 80;
                                 self.combat = CombatState::Explore;
                                 self.typing.clear();
                             } else {
                                 self.message = format!(
-                                    "{}🩸 Drained {} HP from {}! +{} HP ({} left)",
-                                    spell.hanzi, dmg, e_hanzi, dmg, self.enemies[enemy_idx].hp
+                                    "{}🩸 Drained {} HP from {}! +{} HP ({} left){}",
+                                    spell.hanzi,
+                                    applied_dmg,
+                                    e_hanzi,
+                                    applied_dmg,
+                                    self.enemies[enemy_idx].hp,
+                                    if elementalist_resisted {
+                                        " The Elementalist resists the repeated school."
+                                    } else {
+                                        ""
+                                    }
                                 );
                                 self.message_timer = 60;
                             }
@@ -1199,19 +2231,88 @@ impl GameState {
                             if let Some((ex, ey)) = e_screen {
                                 self.particles.spawn_stun(ex, ey, &mut self.rng_state);
                             }
-                            self.enemies[enemy_idx].stunned = true;
                             let e_hanzi = self.enemies[enemy_idx].hanzi;
-                            self.message = format!(
-                                "{}⚡ {} is stunned! It will skip its next action.",
-                                spell.hanzi, e_hanzi
-                            );
+                            let (water_tiles, shocked, water_kills) =
+                                self.electrify_visible_water(arcane_mult + spell_power);
+                            if !elementalist_resisted {
+                                self.enemies[enemy_idx].stunned = true;
+                            }
+                            self.message = if water_tiles > 0 {
+                                format!(
+                                    "{}⚡ {}{} Water arcs through {} foes on {} tiles! ({} fried)",
+                                    spell.hanzi,
+                                    e_hanzi,
+                                    if elementalist_resisted {
+                                        " resists the repeated stun!"
+                                    } else {
+                                        " is stunned!"
+                                    },
+                                    shocked,
+                                    water_tiles,
+                                    water_kills
+                                )
+                            } else {
+                                format!(
+                                    "{}⚡ {}{}",
+                                    spell.hanzi,
+                                    e_hanzi,
+                                    if elementalist_resisted {
+                                        " resists the repeated stun!"
+                                    } else {
+                                        " is stunned! It will skip its next action."
+                                    }
+                                )
+                            };
                             self.message_timer = 60;
+                            if !self.enemies[enemy_idx].is_alive() {
+                                self.combat = CombatState::Explore;
+                                self.typing.clear();
+                            }
+                        }
+                    }
+                    SpellEffect::Pacify => {
+                        if enemy_idx < self.enemies.len() {
+                            if let Some((ex, ey)) = e_screen {
+                                self.particles.spawn_shield(ex, ey, &mut self.rng_state);
+                            }
+                            let e_hanzi = self.enemies[enemy_idx].hanzi;
+                            if self.enemies[enemy_idx].is_boss {
+                                self.enemies[enemy_idx].stunned = true;
+                                self.flash = Some((150, 190, 255, 0.14));
+                                self.message = format!(
+                                    "{}☯ {} resists a full truce, but falters and loses its next action.",
+                                    spell.hanzi, e_hanzi
+                                );
+                                self.message_timer = 80;
+                            } else {
+                                let gold = Self::pacify_gold_reward(
+                                    self.enemies[enemy_idx].gold_value,
+                                    spell_power,
+                                );
+                                self.player.gold += gold;
+                                self.enemies[enemy_idx].hp = 0;
+                                self.flash = Some((120, 220, 190, 0.18));
+                                self.message = format!(
+                                    "{}☯ You reason with {}. It withdraws peacefully and leaves {} gold behind.",
+                                    spell.hanzi, e_hanzi, gold
+                                );
+                                self.message_timer = 80;
+                                self.combat = CombatState::Explore;
+                                self.typing.clear();
+                            }
                         }
                     }
                 }
 
+                if enemy_idx < self.enemies.len()
+                    && self.enemies[enemy_idx].boss_kind == Some(BossKind::Elementalist)
+                {
+                    if let Some(school) = spell_school {
+                        self.enemies[enemy_idx].resisted_spell = Some(school);
+                    }
+                }
+
                 // ── Combo detection ─────────────────────────────────────
-                let current_effect = spell.effect;
                 if let Some(prev) = self.last_spell.take() {
                     let combo = detect_combo(&prev, &current_effect);
                     if let Some((combo_name, combo_effect)) = combo {
@@ -1220,6 +2321,9 @@ impl GameState {
                 }
                 self.last_spell = Some(current_effect);
                 self.spell_combo_timer = 3;
+                if matches!(self.combat, CombatState::Fighting { .. }) && self.maybe_trigger_boss_phase(enemy_idx) {
+                    self.typing.clear();
+                }
             } else {
                 self.message = "No spells available!".to_string();
                 self.message_timer = 40;
@@ -1308,7 +2412,7 @@ impl GameState {
                 0 => {
                     // Random item
                     let item = self.random_item();
-                    let name = item.name().to_string();
+                    let name = self.item_display_name(&item);
                     if self.player.add_item(item) {
                         self.message = format!("◆ Found {}!", name);
                         self.achievements.check_items(self.player.items.len());
@@ -1397,6 +2501,10 @@ impl GameState {
             return;
         }
         let item = self.player.items.remove(idx);
+        let kind = item.kind();
+        let appearance = self.item_appearance(kind).to_string();
+        let true_name = item.name();
+        let newly_identified = self.identify_item_kind(kind);
         if let Some(ref audio) = self.audio { audio.play_spell(); }
 
         match item {
@@ -1422,7 +2530,7 @@ impl GameState {
                 self.message_timer = 60;
             }
             crate::player::Item::RevealScroll => {
-                for r in self.level.revealed.iter_mut() { *r = true; }
+                self.reveal_entire_floor();
                 self.message = "👁 Map revealed!".to_string();
                 self.message_timer = 60;
             }
@@ -1471,6 +2579,11 @@ impl GameState {
                 self.message_timer = 60;
             }
         }
+
+        if newly_identified {
+            self.message
+                .push_str(&format!(" The {} reveals itself as {}.", appearance, true_name));
+        }
     }
 
     /// Restart after game over.
@@ -1485,6 +2598,11 @@ impl GameState {
         self.typing.clear();
         // Keep discovered recipes across runs (loaded from localStorage)
         self.combat = CombatState::ClassSelect;
+        self.tutorial = None;
+        self.show_inventory = false;
+        self.show_settings = false;
+        self.show_talent_tree = false;
+        self.message_tick_delay = 0;
         self.new_floor();
     }
 
@@ -1554,6 +2672,63 @@ impl GameState {
             .unwrap_or_default()
     }
 
+    fn load_settings() -> GameSettings {
+        let storage: Option<web_sys::Storage> = window()
+            .and_then(|w: web_sys::Window| w.local_storage().ok().flatten());
+        if let Some(storage) = storage {
+            let music_volume = storage
+                .get_item("radical_roguelike_music_volume")
+                .ok()
+                .flatten()
+                .and_then(|s: String| s.parse::<u8>().ok())
+                .filter(|v| *v <= 100)
+                .unwrap_or(100);
+            let sfx_volume = storage
+                .get_item("radical_roguelike_sfx_volume")
+                .ok()
+                .flatten()
+                .and_then(|s: String| s.parse::<u8>().ok())
+                .filter(|v| *v <= 100)
+                .unwrap_or(100);
+            let screen_shake = storage
+                .get_item("radical_roguelike_screen_shake")
+                .ok()
+                .flatten()
+                .map(|s: String| s != "0")
+                .unwrap_or(true);
+            let text_speed = storage
+                .get_item("radical_roguelike_text_speed")
+                .ok()
+                .flatten()
+                .map(|s| TextSpeed::from_storage(&s))
+                .unwrap_or(TextSpeed::Normal);
+            GameSettings {
+                music_volume,
+                sfx_volume,
+                screen_shake,
+                text_speed,
+            }
+        } else {
+            GameSettings::default()
+        }
+    }
+
+    fn load_talents() -> TalentTree {
+        let storage: Option<web_sys::Storage> = window()
+            .and_then(|w: web_sys::Window| w.local_storage().ok().flatten());
+        storage
+            .and_then(|s| s.get_item("radical_roguelike_talents").ok().flatten())
+            .map(|value| {
+                let mut parts = value.split(',');
+                TalentTree {
+                    jade_heart: parts.next().and_then(|v| v.parse::<u8>().ok()).unwrap_or(0).min(TalentTree::max_rank(0)),
+                    haggler_ink: parts.next().and_then(|v| v.parse::<u8>().ok()).unwrap_or(0).min(TalentTree::max_rank(1)),
+                    spell_echo: parts.next().and_then(|v| v.parse::<u8>().ok()).unwrap_or(0).min(TalentTree::max_rank(2)),
+                }
+            })
+            .unwrap_or_default()
+    }
+
     fn load_stat(key: &str) -> u32 {
         let storage: Option<web_sys::Storage> = window()
             .and_then(|w: web_sys::Window| w.local_storage().ok().flatten());
@@ -1572,9 +2747,51 @@ impl GameState {
         }
     }
 
+    fn save_settings(&self) {
+        let storage: Option<web_sys::Storage> = window()
+            .and_then(|w: web_sys::Window| w.local_storage().ok().flatten());
+        if let Some(storage) = storage {
+            let _ = storage.set_item(
+                "radical_roguelike_music_volume",
+                &self.settings.music_volume.to_string(),
+            );
+            let _ = storage.set_item(
+                "radical_roguelike_sfx_volume",
+                &self.settings.sfx_volume.to_string(),
+            );
+            let _ = storage.set_item(
+                "radical_roguelike_screen_shake",
+                if self.settings.screen_shake { "1" } else { "0" },
+            );
+            let _ = storage.set_item(
+                "radical_roguelike_text_speed",
+                self.settings.text_speed.storage_key(),
+            );
+        }
+    }
+
+    fn save_talents(&self) {
+        let storage: Option<web_sys::Storage> = window()
+            .and_then(|w: web_sys::Window| w.local_storage().ok().flatten());
+        if let Some(storage) = storage {
+            let data = format!(
+                "{},{},{}",
+                self.talents.jade_heart, self.talents.haggler_ink, self.talents.spell_echo
+            );
+            let _ = storage.set_item("radical_roguelike_talents", &data);
+        }
+    }
+
     fn tick_message(&mut self) {
         if self.message_timer > 0 {
-            self.message_timer -= 1;
+            if self.message_tick_delay > 0 {
+                self.message_tick_delay -= 1;
+                return;
+            }
+            self.message_tick_delay = self.settings.text_speed.timer_delay().saturating_sub(1);
+            self.message_timer = self
+                .message_timer
+                .saturating_sub(self.settings.text_speed.timer_step());
             if self.message_timer == 0 {
                 self.message.clear();
             }
@@ -1584,6 +2801,14 @@ impl GameState {
     fn render(&self) {
         let popup = self.achievement_popup.map(|(n, d, _)| (n, d));
         let room_mod = self.current_room_modifier();
+        let tutorial_hint = self.tutorial_hint();
+        let (knowledge_progress, knowledge_step) = self.knowledge_progress();
+        let item_labels: Vec<String> = self
+            .player
+            .items
+            .iter()
+            .map(|item| self.item_display_name(item))
+            .collect();
         self.renderer.draw(
             &self.level,
             &self.player,
@@ -1598,15 +2823,37 @@ impl GameState {
             self.discovered_recipes.len(),
             &self.srs,
             &self.particles,
-            self.shake_timer,
+            if self.settings.screen_shake { self.shake_timer } else { 0 },
             self.flash,
             popup,
             room_mod,
             self.listening_mode,
             self.companion,
             &self.quests,
+            tutorial_hint,
+            &item_labels,
+            &self.settings,
+            self.show_settings,
+            self.settings_cursor,
+            &self.talents,
+            self.show_talent_tree,
+            self.talent_cursor,
+            self.knowledge_points_available(),
+            self.knowledge_points_total(),
+            knowledge_progress,
+            knowledge_step,
         );
-        if self.show_codex {
+        if self.show_inventory {
+            self.renderer.draw_inventory(
+                &self.player,
+                self.floor_num,
+                self.discovered_recipes.len(),
+                self.best_floor,
+                self.total_kills,
+                self.companion,
+                &item_labels,
+            );
+        } else if self.show_codex {
             let entries = self.codex.sorted_entries();
             self.renderer.draw_codex(&entries);
         }
@@ -1638,10 +2885,133 @@ fn spell_category(effect: &SpellEffect) -> &'static str {
     match effect {
         SpellEffect::FireAoe(_) => "fire",
         SpellEffect::Heal(_) => "heal",
+        SpellEffect::Reveal => "utility",
         SpellEffect::Shield => "shield",
         SpellEffect::StrongHit(_) => "strike",
         SpellEffect::Drain(_) => "drain",
         SpellEffect::Stun => "stun",
+        SpellEffect::Pacify => "utility",
+    }
+}
+
+fn tutorial_exit_blocker_for(tutorial: Option<&TutorialState>) -> Option<&'static str> {
+    let tutorial = tutorial?;
+    if !tutorial.combat_done {
+        Some("The exit is sealed. Defeat 大 before leaving the tutorial.")
+    } else if !tutorial.forge_done {
+        Some("The exit is sealed. Forge 好 at the anvil before leaving.")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        detect_combo, spell_category, tutorial_exit_blocker_for, GameState, TalentTree, TextSpeed,
+        TutorialState,
+    };
+    use crate::player::ITEM_KIND_COUNT;
+    use crate::radical::SpellEffect;
+
+    #[test]
+    fn text_speed_storage_round_trip() {
+        assert_eq!(TextSpeed::from_storage("slow"), TextSpeed::Slow);
+        assert_eq!(TextSpeed::from_storage("normal"), TextSpeed::Normal);
+        assert_eq!(TextSpeed::from_storage("fast"), TextSpeed::Fast);
+        assert_eq!(TextSpeed::Fast.storage_key(), "fast");
+    }
+
+    #[test]
+    fn settings_volume_adjustment_clamps() {
+        assert_eq!(GameState::adjust_volume(0, -1), 0);
+        assert_eq!(GameState::adjust_volume(95, 1), 100);
+        assert_eq!(GameState::adjust_volume(40, -2), 20);
+    }
+
+    #[test]
+    fn talent_tree_upgrades_and_caps() {
+        let mut talents = TalentTree::default();
+        assert!(talents.upgrade(0));
+        assert_eq!(talents.starting_hp_bonus(), 1);
+        for _ in 0..10 {
+            let _ = talents.upgrade(1);
+        }
+        assert_eq!(talents.rank(1), TalentTree::max_rank(1));
+        assert_eq!(talents.shop_discount_pct(), 20);
+    }
+
+    #[test]
+    fn utility_spells_do_not_create_damage_combos() {
+        assert_eq!(spell_category(&SpellEffect::Reveal), "utility");
+        assert_eq!(spell_category(&SpellEffect::Pacify), "utility");
+        assert!(detect_combo(&SpellEffect::Reveal, &SpellEffect::Shield).is_none());
+        assert!(detect_combo(&SpellEffect::Pacify, &SpellEffect::FireAoe(3)).is_none());
+    }
+
+    #[test]
+    fn pacify_reward_scales_with_spell_power() {
+        assert_eq!(GameState::pacify_gold_reward(2, 0), 4);
+        assert_eq!(GameState::pacify_gold_reward(9, 2), 7);
+    }
+
+    #[test]
+    fn forge_quest_candidates_respect_floor_radicals() {
+        let floor_one = GameState::forge_quest_candidates_for_floor(1);
+        assert!(floor_one.iter().any(|recipe| recipe.output_hanzi == "明"));
+        assert!(!floor_one.iter().any(|recipe| recipe.output_hanzi == "理"));
+    }
+
+    #[test]
+    fn item_appearance_order_is_deterministic_for_a_seed() {
+        assert_eq!(
+            GameState::roll_item_appearance_order(12345),
+            GameState::roll_item_appearance_order(12345)
+        );
+    }
+
+    #[test]
+    fn item_appearance_order_uses_each_appearance_once() {
+        let mut order = GameState::roll_item_appearance_order(99).to_vec();
+        order.sort_unstable();
+
+        assert_eq!(order, (0..ITEM_KIND_COUNT).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn tutorial_exit_blocker_requires_combat_before_descent() {
+        let tutorial = TutorialState {
+            combat_done: false,
+            forge_done: false,
+        };
+
+        assert_eq!(
+            tutorial_exit_blocker_for(Some(&tutorial)),
+            Some("The exit is sealed. Defeat 大 before leaving the tutorial.")
+        );
+    }
+
+    #[test]
+    fn tutorial_exit_blocker_requires_forge_after_combat() {
+        let tutorial = TutorialState {
+            combat_done: true,
+            forge_done: false,
+        };
+
+        assert_eq!(
+            tutorial_exit_blocker_for(Some(&tutorial)),
+            Some("The exit is sealed. Forge 好 at the anvil before leaving.")
+        );
+    }
+
+    #[test]
+    fn tutorial_exit_blocker_clears_once_tutorial_is_complete() {
+        let tutorial = TutorialState {
+            combat_done: true,
+            forge_done: true,
+        };
+
+        assert_eq!(tutorial_exit_blocker_for(Some(&tutorial)), None);
     }
 }
 
@@ -1674,9 +3044,16 @@ pub fn init_game() -> Result<(), JsValue> {
 
     let best_floor = GameState::load_high_score();
     let srs = crate::srs::load_srs();
-    let audio = Audio::new();
+    let settings = GameState::load_settings();
+    let talents = GameState::load_talents();
+    let mut audio = Audio::new();
+    if let Some(ref mut audio) = audio {
+        audio.set_music_volume(settings.music_volume);
+        audio.set_sfx_volume(settings.sfx_volume);
+    }
     let total_runs = GameState::load_stat("radical_roguelike_runs");
     let total_kills = GameState::load_stat("radical_roguelike_kills");
+    let item_appearance_order = GameState::roll_item_appearance_order(seed);
 
     let state = Rc::new(RefCell::new(GameState {
         level,
@@ -1690,6 +3067,7 @@ pub fn init_game() -> Result<(), JsValue> {
         typing: String::new(),
         message: String::new(),
         message_timer: 0,
+        message_tick_delay: 0,
         discovered_recipes: GameState::load_recipes(),
         best_floor,
         srs,
@@ -1703,6 +3081,15 @@ pub fn init_game() -> Result<(), JsValue> {
         achievement_popup: None,
         codex: Codex::load(&vocab::VOCAB),
         show_codex: false,
+        show_inventory: false,
+        item_appearance_order,
+        identified_items: [false; ITEM_KIND_COUNT],
+        settings,
+        show_settings: false,
+        settings_cursor: 0,
+        talents,
+        show_talent_tree: false,
+        talent_cursor: 0,
         last_spell: None,
         spell_combo_timer: 0,
         listening_mode: false,
@@ -1711,12 +3098,13 @@ pub fn init_game() -> Result<(), JsValue> {
         quests: Vec::new(),
         daily_mode: false,
         endless_mode: false,
+        tutorial: None,
         rng_state: seed,
     }));
 
     // Initial setup
     {
-        let mut s = state.borrow_mut();
+        let s = state.borrow_mut();
         // Don't spawn enemies yet — class selection first
         s.render();
     }
@@ -1730,6 +3118,76 @@ pub fn init_game() -> Result<(), JsValue> {
 
             // Resume audio context on first interaction (browser requirement)
             if let Some(ref audio) = s.audio { audio.resume(); }
+
+            if s.show_settings {
+                event.prevent_default();
+                match key.as_str() {
+                    "Escape" | "o" | "O" => s.close_settings(),
+                    "ArrowUp" | "w" | "W" => s.move_settings_cursor(-1),
+                    "ArrowDown" | "s" | "S" => s.move_settings_cursor(1),
+                    "ArrowLeft" | "a" | "A" => s.adjust_selected_setting(-1),
+                    "ArrowRight" | "d" | "D" | "Enter" => s.adjust_selected_setting(1),
+                    _ => {}
+                }
+                s.render();
+                return;
+            }
+
+            if s.show_talent_tree {
+                event.prevent_default();
+                match key.as_str() {
+                    "Escape" | "t" | "T" => s.close_talent_tree(),
+                    "ArrowUp" | "w" | "W" => s.move_talent_cursor(-1),
+                    "ArrowDown" | "s" | "S" => s.move_talent_cursor(1),
+                    "Enter" | "ArrowRight" | "d" | "D" => s.purchase_selected_talent(),
+                    _ => {}
+                }
+                s.render();
+                return;
+            }
+
+            if s.show_inventory {
+                event.prevent_default();
+                match key.as_str() {
+                    "Escape" | "i" | "I" => s.close_inventory(),
+                    _ => {}
+                }
+                s.render();
+                return;
+            }
+
+            if (key == "o" || key == "O")
+                && !s.show_codex
+                && matches!(
+                    s.combat,
+                    CombatState::Explore | CombatState::ClassSelect | CombatState::GameOver
+                )
+            {
+                event.prevent_default();
+                s.open_settings();
+                s.render();
+                return;
+            }
+
+            if (key == "t" || key == "T")
+                && !s.show_codex
+                && matches!(s.combat, CombatState::ClassSelect | CombatState::GameOver)
+            {
+                event.prevent_default();
+                s.open_talent_tree();
+                s.render();
+                return;
+            }
+
+            if (key == "i" || key == "I")
+                && !s.show_codex
+                && matches!(s.combat, CombatState::Explore | CombatState::GameOver)
+            {
+                event.prevent_default();
+                s.open_inventory();
+                s.render();
+                return;
+            }
 
             // Game over: press R to restart
             if matches!(s.combat, CombatState::GameOver) {
@@ -1805,7 +3263,17 @@ pub fn init_game() -> Result<(), JsValue> {
             // Sentence Challenge input
             if matches!(s.combat, CombatState::SentenceChallenge { .. }) {
                 event.prevent_default();
-                if let CombatState::SentenceChallenge { ref tiles, ref words, ref mut cursor, ref mut arranged, meaning } = s.combat {
+                let mut completed = None;
+                let mut escaped_mode = None;
+                if let CombatState::SentenceChallenge {
+                    ref tiles,
+                    ref words,
+                    ref mut cursor,
+                    ref mut arranged,
+                    meaning,
+                    ref mode,
+                } = s.combat
+                {
                     let remaining: Vec<usize> = tiles.iter().copied()
                         .filter(|t| !arranged.contains(t))
                         .collect();
@@ -1823,15 +3291,12 @@ pub fn init_game() -> Result<(), JsValue> {
                                 // Check if complete
                                 if arranged.len() == words.len() {
                                     let correct = arranged.iter().enumerate().all(|(i, &a)| a == i);
-                                    if correct {
-                                        s.player.gold += 30;
-                                        s.message = format!("✓ Correct! \"{}\" — +30g bonus!", meaning);
-                                    } else {
-                                        let correct_text: Vec<&str> = (0..words.len()).map(|i| words[i]).collect();
-                                        s.message = format!("✗ Wrong order! Correct: {}", correct_text.join(" "));
-                                    }
-                                    s.combat = CombatState::Explore;
-                                    s.message_timer = 120;
+                                    completed = Some((
+                                        correct,
+                                        mode.clone(),
+                                        meaning.to_string(),
+                                        words.join(" "),
+                                    ));
                                 }
                             }
                         }
@@ -1840,11 +3305,91 @@ pub fn init_game() -> Result<(), JsValue> {
                             *cursor = 0;
                         }
                         "Escape" => {
+                            escaped_mode = Some(mode.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some((correct, mode, meaning, correct_text)) = completed {
+                    match mode {
+                        SentenceChallengeMode::BonusGold { reward } => {
+                            if correct {
+                                s.player.gold += reward;
+                                s.message = format!("✓ Correct! \"{}\" — +{}g bonus!", meaning, reward);
+                            } else {
+                                s.message = format!("✗ Wrong order! Correct: {}", correct_text);
+                            }
+                            s.combat = CombatState::Explore;
+                            s.message_timer = 120;
+                        }
+                        SentenceChallengeMode::ScholarTrial {
+                            boss_idx,
+                            success_damage,
+                            failure_heal,
+                        } => {
+                            if boss_idx < s.enemies.len() && s.enemies[boss_idx].is_alive() {
+                                if correct {
+                                    let applied = success_damage.min((s.enemies[boss_idx].hp - 1).max(1));
+                                    s.enemies[boss_idx].hp -= applied;
+                                    s.enemies[boss_idx].stunned = true;
+                                    s.message = format!(
+                                        "✓ Correct! \"{}\" — The Scholar loses {} HP and is stunned!",
+                                        meaning, applied
+                                    );
+                                } else {
+                                    let before = s.enemies[boss_idx].hp;
+                                    s.enemies[boss_idx].hp =
+                                        (before + failure_heal).min(s.enemies[boss_idx].max_hp);
+                                    let healed = s.enemies[boss_idx].hp - before;
+                                    s.message = format!(
+                                        "✗ Wrong order! Correct: {} — The Scholar regains {} HP.",
+                                        correct_text, healed
+                                    );
+                                }
+                                s.combat = CombatState::Fighting {
+                                    enemy_idx: boss_idx,
+                                    timer_ms: 0.0,
+                                };
+                                s.typing.clear();
+                            } else {
+                                s.combat = CombatState::Explore;
+                                s.message = "The sentence duel fades.".to_string();
+                            }
+                            s.message_timer = 120;
+                        }
+                    }
+                } else if let Some(mode) = escaped_mode {
+                    match mode {
+                        SentenceChallengeMode::BonusGold { .. } => {
                             s.combat = CombatState::Explore;
                             s.message = "Skipped sentence challenge.".to_string();
                             s.message_timer = 40;
                         }
-                        _ => {}
+                        SentenceChallengeMode::ScholarTrial {
+                            boss_idx,
+                            failure_heal,
+                            ..
+                        } => {
+                            if boss_idx < s.enemies.len() && s.enemies[boss_idx].is_alive() {
+                                let before = s.enemies[boss_idx].hp;
+                                s.enemies[boss_idx].hp =
+                                    (before + failure_heal).min(s.enemies[boss_idx].max_hp);
+                                let healed = s.enemies[boss_idx].hp - before;
+                                s.combat = CombatState::Fighting {
+                                    enemy_idx: boss_idx,
+                                    timer_ms: 0.0,
+                                };
+                                s.typing.clear();
+                                s.message = format!(
+                                    "You abandon the syntax duel. The Scholar regains {} HP!",
+                                    healed
+                                );
+                            } else {
+                                s.combat = CombatState::Explore;
+                                s.message = "The sentence duel fades.".to_string();
+                            }
+                            s.message_timer = 80;
+                        }
                     }
                 }
                 s.render();
@@ -1865,7 +3410,8 @@ pub fn init_game() -> Result<(), JsValue> {
                     s.daily_mode = true;
                     s.level = DungeonLevel::generate(MAP_W, MAP_H, daily_seed);
                     let (sx, sy) = s.level.start_pos();
-                    s.player = Player::new(sx, sy, PlayerClass::Scholar);
+                    s.player = s.make_player(sx, sy, PlayerClass::Scholar, false);
+                    s.reset_item_lore();
                     s.combat = CombatState::Explore;
                     s.message = "🏆 Daily Challenge! Fixed seed — compete for high score!".to_string();
                     s.message_timer = 150;
@@ -1883,19 +3429,24 @@ pub fn init_game() -> Result<(), JsValue> {
                 };
                 if let Some(chosen_class) = class {
                     s.daily_mode = false;
-                    let (sx, sy) = s.level.start_pos();
-                    s.player = Player::new(sx, sy, chosen_class);
-                    s.combat = CombatState::Explore;
-                    let class_name = match chosen_class {
-                        PlayerClass::Scholar => "Scholar",
-                        PlayerClass::Warrior => "Warrior",
-                        PlayerClass::Alchemist => "Alchemist",
-                    };
-                    s.message = format!("You chose {}! Explore the dungeon...", class_name);
-                    s.message_timer = 120;
-                    s.spawn_enemies();
-                    let (px, py) = (s.player.x, s.player.y);
-                    compute_fov(&mut s.level, px, py, FOV_RADIUS);
+                    if s.total_runs == 0 {
+                        s.start_tutorial(chosen_class);
+                    } else {
+                        let (sx, sy) = s.level.start_pos();
+                        s.player = s.make_player(sx, sy, chosen_class, true);
+                        s.reset_item_lore();
+                        s.combat = CombatState::Explore;
+                        let class_name = match chosen_class {
+                            PlayerClass::Scholar => "Scholar",
+                            PlayerClass::Warrior => "Warrior",
+                            PlayerClass::Alchemist => "Alchemist",
+                        };
+                        s.message = format!("You chose {}! Explore the dungeon...", class_name);
+                        s.message_timer = 120;
+                        s.spawn_enemies();
+                        let (px, py) = (s.player.x, s.player.y);
+                        compute_fov(&mut s.level, px, py, FOV_RADIUS);
+                    }
                     s.render();
                 }
                 return;
@@ -1907,7 +3458,6 @@ pub fn init_game() -> Result<(), JsValue> {
                 match key.as_str() {
                     "Enter" => {
                         s.submit_answer();
-                        s.tick_message();
                         s.render();
                     }
                     "Backspace" => {
@@ -2190,7 +3740,12 @@ pub fn init_game() -> Result<(), JsValue> {
                 "1" | "2" | "3" | "4" | "5" => {
                     let idx = key.parse::<usize>().unwrap_or(1) - 1;
                     s.use_item(idx);
-                    s.tick_message();
+                    s.render();
+                    return;
+                }
+                "x" | "X" => {
+                    event.prevent_default();
+                    s.descend_floor(true);
                     s.render();
                     return;
                 }
@@ -2205,7 +3760,6 @@ pub fn init_game() -> Result<(), JsValue> {
             };
             event.prevent_default();
             s.try_move(dx, dy);
-            s.tick_message();
             s.render();
         });
         doc.add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref())?;
@@ -2256,22 +3810,22 @@ pub fn init_game() -> Result<(), JsValue> {
                     }
                 }
 
-                let has_popup = s.achievement_popup.is_some();
-                let needs_anim = s.particles.is_active() || s.shake_timer > 0 || s.flash.is_some() || has_popup;
-                if needs_anim {
-                    s.particles.tick();
-                    if s.shake_timer > 0 {
-                        s.shake_timer -= 1;
-                    }
-                    if let Some((_, _, _, ref mut a)) = s.flash {
-                        *a -= 0.05;
-                        if *a <= 0.0 {
-                            s.flash = None;
-                        }
-                    }
-                    // Render is called inside the borrow_mut scope
-                    s.render();
+                let had_message = s.message_timer > 0;
+                if had_message {
+                    s.tick_message();
                 }
+                s.particles.tick();
+                if s.shake_timer > 0 {
+                    s.shake_timer -= 1;
+                }
+                if let Some((_, _, _, ref mut a)) = s.flash {
+                    *a -= 0.05;
+                    if *a <= 0.0 {
+                        s.flash = None;
+                    }
+                }
+                // Visual polish needs continuous animation for ambience and idle motion.
+                s.render();
             }
             // Schedule next frame
             if let Some(win) = window() {

@@ -40,11 +40,6 @@ impl ParticleSystem {
         }
     }
 
-    /// Returns true if any particles are still alive (needs animation).
-    pub fn is_active(&self) -> bool {
-        !self.particles.is_empty()
-    }
-
     pub fn tick(&mut self) {
         for p in &mut self.particles {
             p.tick();
