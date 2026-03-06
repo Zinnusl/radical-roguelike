@@ -419,6 +419,7 @@ pub struct GameState {
     /// Whether codex overlay is showing
     pub show_codex: bool,
     pub show_inventory: bool,
+    pub show_help: bool,
     item_appearance_order: [usize; ITEM_KIND_COUNT],
     identified_items: [bool; ITEM_KIND_COUNT],
     pub settings: GameSettings,
@@ -1532,7 +1533,7 @@ impl GameState {
                                 .elite_expected_syllable()
                                 .unwrap_or(e_pinyin);
                             elite_message = Some(format!(
-                                "Linked syllable {} lands! Chain {}/{} — next: {}",
+                                "⛓ {} clicks! Chain {}/{} — next: {}",
                                 matched, next_progress, total, next_expected
                             ));
                         }
@@ -1544,7 +1545,7 @@ impl GameState {
                             if self.enemies[enemy_idx].hp > 0 {
                                 self.enemies[enemy_idx].stunned = true;
                                 elite_message = Some(format!(
-                                    "Compound broken with {}! {} takes {} damage and staggers.",
+                                    "✦ Compound broken with {}! {} takes {} damage and staggers.",
                                     matched, e_hanzi, dealt_dmg
                                 ));
                             }
@@ -1608,7 +1609,7 @@ impl GameState {
                         );
                     }
                     if e_is_elite && elite_completed_cycle {
-                        self.message = format!("{} — Compound shattered!", self.message);
+                        self.message = format!("⛓ {} — Compound shattered!", self.message);
                     }
 
                     // Bosses drop a rare radical
@@ -1693,7 +1694,7 @@ impl GameState {
                     self.enemies[enemy_idx].stunned = false;
                     self.message = if e_is_elite {
                         format!(
-                            "Wrong chain! Needed \"{}\", but {} is still staggered and cannot counterattack.",
+                            "✗ Wrong chain! Needed \"{}\", but {} is still staggered and cannot counterattack.",
                             expected_pinyin, e_hanzi
                         )
                     } else {
@@ -1707,7 +1708,7 @@ impl GameState {
                     self.player.shield = false;
                     self.message = if e_is_elite {
                         format!(
-                            "Wrong chain! Needed \"{}\" — Shield absorbed the blow!",
+                            "✗ Wrong chain! Needed \"{}\" — Shield absorbed the blow!",
                             expected_pinyin
                         )
                     } else {
@@ -1721,7 +1722,7 @@ impl GameState {
                     self.guard_used_this_fight = true;
                     self.message = if e_is_elite {
                         format!(
-                            "Wrong chain! Needed \"{}\" — 🛡 Guard blocks the attack!",
+                            "✗ Wrong chain! Needed \"{}\" — 🛡 Guard blocks the attack!",
                             expected_pinyin
                         )
                     } else {
@@ -1741,7 +1742,7 @@ impl GameState {
                     self.flash = Some((255, 50, 50, 0.25));
                     self.message = if e_is_elite {
                         format!(
-                            "Wrong chain! Needed \"{}\". {} hits for {} and the compound resets!",
+                            "✗ Wrong chain! Needed \"{}\". {} hits for {} and the compound resets!",
                             expected_pinyin, e_hanzi, e_damage
                         )
                     } else {
@@ -2707,6 +2708,7 @@ impl GameState {
         self.combat = CombatState::ClassSelect;
         self.tutorial = None;
         self.show_inventory = false;
+        self.show_help = false;
         self.show_settings = false;
         self.show_talent_tree = false;
         self.message_tick_delay = 0;
@@ -2910,6 +2912,9 @@ impl GameState {
         let room_mod = self.current_room_modifier();
         let tutorial_hint = self.tutorial_hint();
         let (knowledge_progress, knowledge_step) = self.knowledge_progress();
+        let show_help =
+            self.show_help && !self.show_inventory && !self.show_codex && !self.show_settings
+                && !self.show_talent_tree;
         let item_labels: Vec<String> = self
             .player
             .items
@@ -2938,6 +2943,7 @@ impl GameState {
             self.companion,
             &self.quests,
             tutorial_hint,
+            show_help,
             &item_labels,
             &self.settings,
             self.show_settings,
@@ -3254,6 +3260,7 @@ pub fn init_game() -> Result<(), JsValue> {
         codex: Codex::load(&vocab::VOCAB),
         show_codex: false,
         show_inventory: false,
+        show_help: false,
         item_appearance_order,
         identified_items: [false; ITEM_KIND_COUNT],
         settings,
@@ -3290,6 +3297,13 @@ pub fn init_game() -> Result<(), JsValue> {
 
             // Resume audio context on first interaction (browser requirement)
             if let Some(ref audio) = s.audio { audio.resume(); }
+
+            if key == "?" || key == "/" {
+                event.prevent_default();
+                s.show_help = !s.show_help;
+                s.render();
+                return;
+            }
 
             if s.show_settings {
                 event.prevent_default();

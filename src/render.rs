@@ -80,6 +80,7 @@ impl Renderer {
         companion: Option<crate::game::Companion>,
         quests: &[crate::game::Quest],
         tutorial_hint: Option<&str>,
+        show_help: bool,
         item_labels: &[String],
         settings: &GameSettings,
         show_settings: bool,
@@ -558,6 +559,9 @@ impl Renderer {
 
         self.ctx.set_fill_style_str("#7e8dbb");
         self.ctx.fill_text("[X] Skip floor", self.canvas_w - 12.0, eq_y).ok();
+        eq_y += 14.0;
+        self.ctx.set_fill_style_str("#8fa8ff");
+        self.ctx.fill_text("[?] Help", self.canvas_w - 12.0, eq_y).ok();
 
         if let Some(tutorial_hint) = tutorial_hint {
             let box_w = 360.0;
@@ -737,7 +741,7 @@ impl Renderer {
                 self.canvas_w * 0.7,
                 30.0,
             );
-            self.ctx.set_fill_style_str("#ffdd88");
+            self.ctx.set_fill_style_str(hud_message_color(message));
             self.ctx
                 .fill_text(message, self.canvas_w / 2.0, self.canvas_h - 17.0 - message_lift)
                 .ok();
@@ -857,6 +861,30 @@ impl Renderer {
                             box_y + 98.0,
                         )
                         .ok();
+
+                    let segment_count = enemy.elite_phase_count().max(1);
+                    let seg_w = 24.0;
+                    let seg_gap = 8.0;
+                    let total_w =
+                        segment_count as f64 * seg_w + segment_count.saturating_sub(1) as f64 * seg_gap;
+                    let seg_x = self.canvas_w / 2.0 - total_w / 2.0;
+                    let seg_y = box_y + 104.0;
+                    for step in 0..segment_count {
+                        let filled = step < enemy.elite_chain;
+                        let current = step == enemy.elite_chain.min(segment_count - 1);
+                        let x = seg_x + step as f64 * (seg_w + seg_gap);
+                        self.ctx.set_fill_style_str(if filled {
+                            "#ffbb44"
+                        } else if current {
+                            "rgba(255,204,102,0.28)"
+                        } else {
+                            "rgba(255,255,255,0.08)"
+                        });
+                        self.ctx.fill_rect(x, seg_y, seg_w, 8.0);
+                        self.ctx.set_stroke_style_str(if current { "#ffdd88" } else { "#665544" });
+                        self.ctx.set_line_width(1.0);
+                        self.ctx.stroke_rect(x, seg_y, seg_w, 8.0);
+                    }
                 }
 
                 // Typing input box
@@ -1609,6 +1637,90 @@ impl Renderer {
                 box_y + box_h - 16.0,
             ).ok();
         }
+
+        if show_help {
+            self.draw_help_overlay(combat, listening_mode);
+        }
+    }
+
+    fn draw_help_overlay(&self, combat: &CombatState, listening_mode: bool) {
+        let mut lines = vec![
+            "Explore: WASD/Arrows move  1-5 use items".to_string(),
+            "I inventory  C codex  O options  X skip floor".to_string(),
+            format!("L listening ({})  ? toggle help", if listening_mode { "on" } else { "off" }),
+        ];
+
+        let mode_title = match combat {
+            CombatState::Fighting { .. } => {
+                lines.push("Combat: Enter submit  Tab cycle spell  Space cast".to_string());
+                lines.push("Esc flee  Elite compounds break one syllable at a time".to_string());
+                if listening_mode {
+                    lines.push("R replay the heard tone during audio fights".to_string());
+                }
+                "Combat Controls"
+            }
+            CombatState::Forging { .. } => {
+                lines.push("Forge: 1-9 toggle radicals  <-/-> page".to_string());
+                lines.push("Enter forge  E enchant  Esc close".to_string());
+                "Forge Controls"
+            }
+            CombatState::Enchanting { .. } => {
+                lines.push("Enchant: 1-3 pick slot  4-9 pick radical".to_string());
+                lines.push("<-/-> page  Esc close".to_string());
+                "Enchant Controls"
+            }
+            CombatState::Shopping { .. } => {
+                lines.push("Shop: Up/Down browse  Enter buy  Esc leave".to_string());
+                "Shop Controls"
+            }
+            CombatState::SentenceChallenge { .. } => {
+                lines.push("Sentence: <-/-> select  Enter pick".to_string());
+                lines.push("Backspace undo  Esc skip".to_string());
+                "Sentence Controls"
+            }
+            CombatState::ToneBattle { .. } => {
+                lines.push("Tone battle: 1-4 answer tones".to_string());
+                lines.push("Listen for the contour, not just the vowel".to_string());
+                "Tone Controls"
+            }
+            CombatState::ClassSelect => {
+                lines.push("Class select: 1 Scholar  2 Warrior  3 Alchemist".to_string());
+                lines.push("D daily challenge  T talents".to_string());
+                "Menu Controls"
+            }
+            CombatState::GameOver => {
+                lines.push("Game over: R restart  T talents  I inventory".to_string());
+                "Game Over Controls"
+            }
+            CombatState::Explore => "Quick Reference",
+        };
+
+        let box_w = 350.0;
+        let box_h = 50.0 + lines.len() as f64 * 16.0;
+        let box_x = 14.0;
+        let box_y = 92.0;
+
+        self.ctx.set_fill_style_str("rgba(8,12,22,0.88)");
+        self.ctx.fill_rect(box_x, box_y, box_w, box_h);
+        self.ctx.set_stroke_style_str("#7f9cff");
+        self.ctx.set_line_width(2.0);
+        self.ctx.stroke_rect(box_x, box_y, box_w, box_h);
+
+        self.ctx.set_text_align("left");
+        self.ctx.set_fill_style_str("#c8d8ff");
+        self.ctx.set_font("bold 14px monospace");
+        self.ctx.fill_text(mode_title, box_x + 12.0, box_y + 20.0).ok();
+        self.ctx.set_fill_style_str("#8fa8ff");
+        self.ctx.set_font("10px monospace");
+        self.ctx.fill_text("Help Overlay", box_x + box_w - 92.0, box_y + 20.0).ok();
+
+        self.ctx.set_fill_style_str("#dbe7ff");
+        self.ctx.set_font("11px monospace");
+        for (idx, line) in lines.iter().enumerate() {
+            self.ctx
+                .fill_text(line, box_x + 12.0, box_y + 40.0 + idx as f64 * 16.0)
+                .ok();
+        }
     }
 
     fn draw_room_ambience(
@@ -2145,6 +2257,30 @@ impl Renderer {
                 self.canvas_h - 10.0,
             ).ok();
         }
+    }
+}
+
+fn hud_message_color(message: &str) -> &'static str {
+    if message.starts_with("Wrong") || message.contains(" hits for ") || message.contains("resets!") {
+        "#ff7777"
+    } else if message.starts_with("⛓") || message.contains("Chain ") || message.contains("Compound broken") {
+        "#ffbb66"
+    } else if message.contains("Shield")
+        || message.contains("Guard")
+        || message.contains("stagger")
+        || message.contains("stunned")
+        || message.contains("counterattack")
+    {
+        "#66ddff"
+    } else if message.starts_with("Defeated")
+        || message.starts_with("Forged")
+        || message.contains("Found")
+        || message.contains("Bought")
+        || message.contains("Talent learned")
+    {
+        "#88ff88"
+    } else {
+        "#ffdd88"
     }
 }
 
