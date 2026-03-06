@@ -40,11 +40,15 @@ pub enum Tile {
     Forge,
     Shop,
     Chest,
+    /// NPC companion (0=Teacher, 1=Monk, 2=Merchant, 3=Guard)
+    Npc(u8),
+    /// Tone shrine for tone battle mini-game
+    Shrine,
 }
 
 impl Tile {
     pub fn is_walkable(self) -> bool {
-        matches!(self, Tile::Floor | Tile::Corridor | Tile::StairsDown | Tile::Forge | Tile::Shop | Tile::Chest)
+        matches!(self, Tile::Floor | Tile::Corridor | Tile::StairsDown | Tile::Forge | Tile::Shop | Tile::Chest | Tile::Npc(_) | Tile::Shrine)
     }
 }
 
@@ -435,6 +439,8 @@ impl DungeonLevel {
         level.place_shop(&mut rng);
         level.place_chests(&mut rng);
         level.assign_room_modifiers(&mut rng);
+        level.place_npcs(&mut rng);
+        level.place_shrines(&mut rng);
         level
     }
 
@@ -442,7 +448,6 @@ impl DungeonLevel {
     fn assign_room_modifiers(&mut self, rng: &mut Rng) {
         let n = self.rooms.len();
         if n <= 2 { return; }
-        // ~30% of middle rooms get a modifier
         for i in 1..n - 1 {
             if rng.next_u64() % 100 < 30 {
                 self.rooms[i].modifier = Some(match rng.next_u64() % 3 {
@@ -451,6 +456,38 @@ impl DungeonLevel {
                     _ => RoomModifier::Cursed,
                 });
             }
+        }
+    }
+
+    /// Place a companion NPC in a random middle room (~40% chance per floor).
+    fn place_npcs(&mut self, rng: &mut Rng) {
+        let n = self.rooms.len();
+        if n <= 3 { return; }
+        if rng.next_u64() % 100 >= 40 { return; }
+        // Pick a random middle room (not first, last, or second-to-last)
+        let room_idx = 1 + (rng.next_u64() as usize % (n - 3));
+        let room = &self.rooms[room_idx];
+        let npc_type = (rng.next_u64() % 4) as u8;
+        let cx = room.x + room.w / 2;
+        let cy = room.y + room.h / 2 + 1; // offset from center
+        let idx = self.idx(cx, cy);
+        if self.tiles[idx] == Tile::Floor {
+            self.tiles[idx] = Tile::Npc(npc_type);
+        }
+    }
+
+    /// Place a tone shrine in a random middle room (~30% chance).
+    fn place_shrines(&mut self, rng: &mut Rng) {
+        let n = self.rooms.len();
+        if n <= 3 { return; }
+        if rng.next_u64() % 100 >= 30 { return; }
+        let room_idx = 1 + (rng.next_u64() as usize % (n - 2));
+        let room = &self.rooms[room_idx];
+        let cx = room.x + room.w / 2 - 1;
+        let cy = room.y + room.h / 2;
+        let idx = self.idx(cx, cy);
+        if self.tiles[idx] == Tile::Floor {
+            self.tiles[idx] = Tile::Shrine;
         }
     }
 }

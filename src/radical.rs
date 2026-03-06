@@ -6,6 +6,7 @@ pub struct Radical {
     pub ch: &'static str,
     pub name: &'static str,
     pub meaning: &'static str,
+    pub rare: bool,
 }
 
 /// A recipe: combining radicals produces a character with an effect.
@@ -60,36 +61,42 @@ pub struct Spell {
 // ── Radical catalog ─────────────────────────────────────────────────────────
 
 pub const RADICALS: &[Radical] = &[
-    Radical { ch: "火", name: "huǒ", meaning: "fire" },
-    Radical { ch: "水", name: "shuǐ", meaning: "water" },
-    Radical { ch: "木", name: "mù", meaning: "wood" },
-    Radical { ch: "金", name: "jīn", meaning: "metal/gold" },
-    Radical { ch: "土", name: "tǔ", meaning: "earth" },
-    Radical { ch: "日", name: "rì", meaning: "sun/day" },
-    Radical { ch: "月", name: "yuè", meaning: "moon/month" },
-    Radical { ch: "心", name: "xīn", meaning: "heart" },
-    Radical { ch: "口", name: "kǒu", meaning: "mouth" },
-    Radical { ch: "手", name: "shǒu", meaning: "hand" },
-    Radical { ch: "目", name: "mù", meaning: "eye" },
-    Radical { ch: "人", name: "rén", meaning: "person" },
-    Radical { ch: "大", name: "dà", meaning: "big" },
-    Radical { ch: "小", name: "xiǎo", meaning: "small" },
-    Radical { ch: "山", name: "shān", meaning: "mountain" },
-    Radical { ch: "石", name: "shí", meaning: "stone" },
-    Radical { ch: "雨", name: "yǔ", meaning: "rain" },
-    Radical { ch: "风", name: "fēng", meaning: "wind" },
-    Radical { ch: "刀", name: "dāo", meaning: "knife" },
-    Radical { ch: "力", name: "lì", meaning: "power" },
-    Radical { ch: "田", name: "tián", meaning: "field" },
-    Radical { ch: "女", name: "nǚ", meaning: "woman" },
-    Radical { ch: "子", name: "zǐ", meaning: "child" },
-    Radical { ch: "王", name: "wáng", meaning: "king" },
-    Radical { ch: "竹", name: "zhú", meaning: "bamboo" },
-    Radical { ch: "米", name: "mǐ", meaning: "rice" },
-    Radical { ch: "虫", name: "chóng", meaning: "insect" },
-    Radical { ch: "贝", name: "bèi", meaning: "shell/treasure" },
-    Radical { ch: "马", name: "mǎ", meaning: "horse" },
-    Radical { ch: "鸟", name: "niǎo", meaning: "bird" },
+    Radical { ch: "火", name: "huǒ", meaning: "fire", rare: false },
+    Radical { ch: "水", name: "shuǐ", meaning: "water", rare: false },
+    Radical { ch: "木", name: "mù", meaning: "wood", rare: false },
+    Radical { ch: "金", name: "jīn", meaning: "metal/gold", rare: false },
+    Radical { ch: "土", name: "tǔ", meaning: "earth", rare: false },
+    Radical { ch: "日", name: "rì", meaning: "sun/day", rare: false },
+    Radical { ch: "月", name: "yuè", meaning: "moon/month", rare: false },
+    Radical { ch: "心", name: "xīn", meaning: "heart", rare: false },
+    Radical { ch: "口", name: "kǒu", meaning: "mouth", rare: false },
+    Radical { ch: "手", name: "shǒu", meaning: "hand", rare: false },
+    Radical { ch: "目", name: "mù", meaning: "eye", rare: false },
+    Radical { ch: "人", name: "rén", meaning: "person", rare: false },
+    Radical { ch: "大", name: "dà", meaning: "big", rare: false },
+    Radical { ch: "小", name: "xiǎo", meaning: "small", rare: false },
+    Radical { ch: "山", name: "shān", meaning: "mountain", rare: false },
+    Radical { ch: "石", name: "shí", meaning: "stone", rare: false },
+    Radical { ch: "雨", name: "yǔ", meaning: "rain", rare: false },
+    Radical { ch: "风", name: "fēng", meaning: "wind", rare: false },
+    Radical { ch: "刀", name: "dāo", meaning: "knife", rare: false },
+    Radical { ch: "力", name: "lì", meaning: "power", rare: false },
+    Radical { ch: "田", name: "tián", meaning: "field", rare: false },
+    Radical { ch: "女", name: "nǚ", meaning: "woman", rare: false },
+    Radical { ch: "子", name: "zǐ", meaning: "child", rare: false },
+    Radical { ch: "王", name: "wáng", meaning: "king", rare: false },
+    Radical { ch: "竹", name: "zhú", meaning: "bamboo", rare: false },
+    Radical { ch: "米", name: "mǐ", meaning: "rice", rare: false },
+    Radical { ch: "虫", name: "chóng", meaning: "insect", rare: false },
+    Radical { ch: "贝", name: "bèi", meaning: "shell/treasure", rare: false },
+    Radical { ch: "马", name: "mǎ", meaning: "horse", rare: false },
+    Radical { ch: "鸟", name: "niǎo", meaning: "bird", rare: false },
+    // ── Rare radicals (boss drops) ──────────────────────────────────────────
+    Radical { ch: "龙", name: "lóng", meaning: "dragon", rare: true },
+    Radical { ch: "鬼", name: "guǐ", meaning: "ghost", rare: true },
+    Radical { ch: "玉", name: "yù", meaning: "jade", rare: true },
+    Radical { ch: "雷", name: "léi", meaning: "thunder", rare: true },
+    Radical { ch: "凤", name: "fèng", meaning: "phoenix", rare: true },
 ];
 
 // ── Recipes (verified via hanzicraft.com decomposition) ─────────────────────
@@ -145,6 +152,15 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { inputs: &["石", "马"], output_hanzi: "码", output_pinyin: "mǎ", output_meaning: "number/code", effect: SpellEffect::Stun },
     Recipe { inputs: &["女", "马"], output_hanzi: "妈", output_pinyin: "mā", output_meaning: "mother", effect: SpellEffect::Stun },
     Recipe { inputs: &["竹", "马"], output_hanzi: "笃", output_pinyin: "dǔ", output_meaning: "sincere/earnest", effect: SpellEffect::Stun },
+    // ── Rare recipes (require boss-drop radicals) ───────────────────────────
+    Recipe { inputs: &["龙", "火"], output_hanzi: "炎龙", output_pinyin: "yán lóng", output_meaning: "flame dragon", effect: SpellEffect::FireAoe(8) },
+    Recipe { inputs: &["龙", "水"], output_hanzi: "泷", output_pinyin: "lóng", output_meaning: "waterfall", effect: SpellEffect::Heal(8) },
+    Recipe { inputs: &["鬼", "火"], output_hanzi: "鬼火", output_pinyin: "guǐ huǒ", output_meaning: "will-o-wisp", effect: SpellEffect::Drain(6) },
+    Recipe { inputs: &["玉", "心"], output_hanzi: "瑰", output_pinyin: "guī", output_meaning: "precious gem", effect: SpellEffect::Shield },
+    Recipe { inputs: &["雷", "力"], output_hanzi: "雷击", output_pinyin: "léi jī", output_meaning: "lightning strike", effect: SpellEffect::StrongHit(8) },
+    Recipe { inputs: &["凤", "火"], output_hanzi: "凤凰", output_pinyin: "fèng huáng", output_meaning: "phoenix", effect: SpellEffect::Heal(10) },
+    Recipe { inputs: &["龙", "鬼"], output_hanzi: "魂", output_pinyin: "hún", output_meaning: "soul", effect: SpellEffect::Drain(8) },
+    Recipe { inputs: &["玉", "龙"], output_hanzi: "珑", output_pinyin: "lóng", output_meaning: "exquisite", effect: SpellEffect::StrongHit(10) },
 ];
 
 /// Try to forge a character from a set of radicals. Order-independent.
@@ -176,15 +192,23 @@ pub fn try_forge(radicals: &[&str]) -> Option<&'static Recipe> {
     None
 }
 
+/// Number of common (non-rare) radicals.
+const COMMON_RADICAL_COUNT: usize = 32;
+
 /// Get a subset of radicals available for a given floor.
-/// Earlier floors have fewer radicals.
+/// Earlier floors have fewer radicals. Excludes rare radicals.
 pub fn radicals_for_floor(floor: i32) -> &'static [Radical] {
     let count = match floor {
         1 => 10,
         2 => 15,
         3 => 20,
         4 => 25,
-        _ => RADICALS.len(),
+        _ => COMMON_RADICAL_COUNT,
     };
-    &RADICALS[..count.min(RADICALS.len())]
+    &RADICALS[..count.min(COMMON_RADICAL_COUNT)]
+}
+
+/// Get the list of rare radicals (boss drops only).
+pub fn rare_radicals() -> &'static [Radical] {
+    &RADICALS[COMMON_RADICAL_COUNT..]
 }

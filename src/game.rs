@@ -25,6 +25,74 @@ const FOV_RADIUS: i32 = 8;
 const ENEMIES_PER_ROOM: i32 = 1;
 
 /// Combat phase when the player is adjacent to / engages an enemy.
+/// Companion NPC that follows the player.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Companion {
+    /// Shows meaning hints in combat
+    Teacher,
+    /// Heals 1 HP per floor
+    Monk,
+    /// 10% shop discount
+    Merchant,
+    /// Blocks 1 damage per fight
+    Guard,
+}
+
+impl Companion {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Companion::Teacher => "Teacher 师",
+            Companion::Monk => "Monk 僧",
+            Companion::Merchant => "Merchant 商",
+            Companion::Guard => "Guard 卫",
+        }
+    }
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Companion::Teacher => "📚",
+            Companion::Monk => "🧘",
+            Companion::Merchant => "💰",
+            Companion::Guard => "🛡",
+        }
+    }
+}
+
+/// Quest condition for procedural quests.
+#[derive(Clone, Debug)]
+pub enum QuestGoal {
+    /// Kill N enemies on this floor
+    KillEnemies(i32, i32),
+    /// Forge a specific character
+    ForgeCharacter(&'static str),
+    /// Reach floor N
+    ReachFloor(i32),
+    /// Collect N radicals
+    CollectRadicals(i32, i32),
+}
+
+/// Active quest given by an NPC.
+#[derive(Clone, Debug)]
+pub struct Quest {
+    pub description: String,
+    pub goal: QuestGoal,
+    pub gold_reward: i32,
+    pub completed: bool,
+}
+
+impl Quest {
+    fn check_complete(&mut self) -> bool {
+        if self.completed { return false; }
+        let done = match &self.goal {
+            QuestGoal::KillEnemies(current, target) => current >= target,
+            QuestGoal::ForgeCharacter(_) => false,
+            QuestGoal::ReachFloor(_) => false,
+            QuestGoal::CollectRadicals(current, target) => current >= target,
+        };
+        if done { self.completed = true; }
+        done
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum CombatState {
     /// Normal exploration — no active fight
@@ -56,7 +124,47 @@ pub enum CombatState {
     GameOver,
     /// Class selection screen at game start
     ClassSelect,
+    /// Tone battle mini-game at a shrine
+    ToneBattle {
+        /// Current round (0-4, 5 rounds per shrine)
+        round: usize,
+        /// The character shown
+        hanzi: &'static str,
+        /// Correct tone (1-4)
+        correct_tone: u8,
+        /// Score so far (correct answers)
+        score: usize,
+        /// Result of last answer (None=waiting, Some(true)=correct, Some(false)=wrong)
+        last_result: Option<bool>,
+    },
+    /// Sentence construction challenge (boss phase 2)
+    SentenceChallenge {
+        /// Scrambled word tiles (indices into correct order)
+        tiles: Vec<usize>,
+        /// The words in correct order
+        words: Vec<&'static str>,
+        /// Current cursor position
+        cursor: usize,
+        /// Player's arranged order so far
+        arranged: Vec<usize>,
+        /// Translation/meaning
+        meaning: &'static str,
+    },
 }
+
+/// Sentence data for sentence construction challenges.
+const SENTENCES: &[(&[&str], &str)] = &[
+    (&["我", "是", "学生"], "I am a student"),
+    (&["你", "好", "吗"], "How are you?"),
+    (&["他", "不", "喝", "水"], "He doesn't drink water"),
+    (&["我们", "去", "学校"], "We go to school"),
+    (&["她", "很", "高兴"], "She is very happy"),
+    (&["我", "想", "吃", "饭"], "I want to eat"),
+    (&["今天", "天气", "很", "好"], "Today's weather is good"),
+    (&["你", "叫", "什么", "名字"], "What is your name?"),
+    (&["他们", "在", "看", "书"], "They are reading books"),
+    (&["我", "喜欢", "中国", "菜"], "I like Chinese food"),
+];
 
 #[derive(Clone, Debug)]
 pub struct ShopItem {
@@ -112,6 +220,12 @@ pub struct GameState {
     pub spell_combo_timer: u8,
     /// Listening mode: enemies play tonal audio instead of showing hanzi
     pub listening_mode: bool,
+    /// Active companion NPC
+    pub companion: Option<Companion>,
+    /// Guard companion: used block this fight?
+    pub guard_used_this_fight: bool,
+    /// Active quests
+    pub quests: Vec<Quest>,
     /// Daily challenge mode (fixed seed)
     pub daily_mode: bool,
     /// Endless mode (continue past floor 20)
@@ -190,6 +304,19 @@ impl GameState {
         let (px, py) = (self.player.x, self.player.y);
         compute_fov(&mut self.level, px, py, FOV_RADIUS);
         self.achievements.check_floor(self.floor_num);
+
+        // Monk companion: heal 1 HP per floor
+        if self.companion == Some(Companion::Monk) {
+            let max_hp = self.player.max_hp;
+            if self.player.hp < max_hp {
+                self.player.hp = (self.player.hp + 1).min(max_hp);
+                self.message = "🧘 Monk heals you for 1 HP.".to_string();
+                self.message_timer = 60;
+            }
+        }
+
+        // Check floor-based quests
+        self.check_floor_quests();
     }
 
     /// Check if an enemy occupies (x, y). Returns its index.
@@ -288,6 +415,7 @@ impl GameState {
                 timer_ms: 0.0,
             };
             self.typing.clear();
+            self.guard_used_this_fight = false;
             if self.listening_mode && !self.enemies[idx].is_elite {
                 // Listening mode: play tone, hide character
                 let pinyin = self.enemies[idx].pinyin;
@@ -349,7 +477,41 @@ impl GameState {
             self.open_chest(nx, ny);
         }
 
-        // After player moves, enemies take a turn (skipped on even moves during haste)
+        // NPC companion recruit or quest
+        if let Tile::Npc(npc_type) = self.level.tile(nx, ny) {
+            let comp = match npc_type {
+                0 => Companion::Teacher,
+                1 => Companion::Monk,
+                2 => Companion::Merchant,
+                _ => Companion::Guard,
+            };
+            if self.companion.is_some() {
+                // Already have companion — offer a quest instead
+                if self.quests.len() < 2 {
+                    let quest = self.generate_quest();
+                    self.message = format!("{} gives quest: {}", comp.icon(), quest.description);
+                    self.quests.push(quest);
+                } else {
+                    self.message = format!("{} {} waves hello! (quest slots full)", comp.icon(), comp.name());
+                }
+            } else {
+                self.companion = Some(comp);
+                self.message = format!("{} {} joins your party!", comp.icon(), comp.name());
+            }
+            self.message_timer = 100;
+            let idx = self.level.idx(nx, ny);
+            self.level.tiles[idx] = Tile::Floor;
+        }
+
+        // Tone shrine interaction
+        if self.level.tile(nx, ny) == Tile::Shrine {
+            self.start_tone_battle();
+            let idx = self.level.idx(nx, ny);
+            self.level.tiles[idx] = Tile::Floor;
+            return;
+        }
+
+        // After player moves, enemies take a turn(skipped on even moves during haste)
         self.move_count += 1;
         let skip_enemy = status::has_haste(&self.player.statuses) && self.move_count % 2 == 0;
         if !skip_enemy {
@@ -463,7 +625,9 @@ impl GameState {
                 // Hit with bonus damage from equipment + room modifiers
                 let cursed_bonus = if self.current_room_modifier() == Some(RoomModifier::Cursed) { 1 } else { 0 };
                 let warrior_bonus = if self.player.class == PlayerClass::Warrior { 1 } else { 0 };
-                let hit_dmg = 2 + self.player.bonus_damage() + self.player.enchant_bonus_damage() + cursed_bonus + warrior_bonus;
+                let tone_bonus = self.player.tone_bonus_damage;
+                self.player.tone_bonus_damage = 0; // consumed
+                let hit_dmg = 2 + self.player.bonus_damage() + self.player.enchant_bonus_damage() + cursed_bonus + warrior_bonus + tone_bonus;
                 self.enemies[enemy_idx].hp -= hit_dmg;
                 if self.enemies[enemy_idx].hp <= 0 {
                     self.total_kills += 1;
@@ -481,6 +645,7 @@ impl GameState {
                     let drop_idx = self.rng_next() as usize % available.len();
                     let dropped = available[drop_idx].ch;
                     self.player.add_radical(dropped);
+                    self.advance_radical_quests();
 
                     // Elite enemies drop an extra radical
                     let e_is_elite = self.enemies[enemy_idx].is_elite;
@@ -518,6 +683,17 @@ impl GameState {
                             e_hanzi, e_gold, dropped
                         );
                     }
+
+                    // Bosses drop a rare radical
+                    if e_is_boss {
+                        let rares = radical::rare_radicals();
+                        if !rares.is_empty() {
+                            let rare_idx = self.rng_next() as usize % rares.len();
+                            let rare = rares[rare_idx].ch;
+                            self.player.add_radical(rare);
+                            self.message = format!("{} ✦ Rare radical [{}]!", self.message, rare);
+                        }
+                    }
                     self.message_timer = 80;
                     // Tutorial hint: first radical collected
                     if self.total_runs == 0 && self.player.radicals.len() == 1 {
@@ -536,6 +712,30 @@ impl GameState {
                     self.achievements.check_radicals(self.player.radicals.len());
                     if e_is_elite { self.achievements.unlock("first_elite"); }
                     if e_is_boss { self.achievements.unlock("first_boss"); }
+
+                    // Boss phase 2: sentence challenge
+                    if e_is_boss && self.floor_num >= 5 {
+                        let sent_idx = self.rng_next() as usize % SENTENCES.len();
+                        let (words, meaning) = SENTENCES[sent_idx];
+                        let mut tiles: Vec<usize> = (0..words.len()).collect();
+                        // Shuffle tiles
+                        for i in (1..tiles.len()).rev() {
+                            let j = self.rng_next() as usize % (i + 1);
+                            tiles.swap(i, j);
+                        }
+                        self.combat = CombatState::SentenceChallenge {
+                            tiles,
+                            words: words.to_vec(),
+                            cursor: 0,
+                            arranged: Vec::new(),
+                            meaning,
+                        };
+                        self.message = "Boss Phase 2! Arrange the words in correct order. ←→ to select, Enter to pick.".to_string();
+                        self.message_timer = 150;
+                    }
+
+                    // Quest progress: kill tracking
+                    self.advance_kill_quests();
                 } else {
                     if let Some(ref audio) = self.audio { audio.play_hit(); }
                     self.message = format!("Hit for {}! {} HP left", hit_dmg, self.enemies[enemy_idx].hp);
@@ -551,6 +751,13 @@ impl GameState {
                     self.player.shield = false;
                     self.message = format!(
                         "Wrong! (was \"{}\") — Shield absorbed the blow!",
+                        e_pinyin
+                    );
+                    self.message_timer = 60;
+                } else if self.companion == Some(Companion::Guard) && !self.guard_used_this_fight {
+                    self.guard_used_this_fight = true;
+                    self.message = format!(
+                        "Wrong! (was \"{}\") — 🛡 Guard blocks the attack!",
                         e_pinyin
                     );
                     self.message_timer = 60;
@@ -668,6 +875,117 @@ impl GameState {
     }
 
     /// Generate shop items for current floor.
+    /// Advance kill-based quests and collect rewards.
+    fn advance_kill_quests(&mut self) {
+        for q in &mut self.quests {
+            if q.completed { continue; }
+            if let QuestGoal::KillEnemies(ref mut current, _) = q.goal {
+                *current += 1;
+            }
+        }
+        self.collect_quest_rewards();
+    }
+
+    /// Advance radical-collect quests.
+    fn advance_radical_quests(&mut self) {
+        for q in &mut self.quests {
+            if q.completed { continue; }
+            if let QuestGoal::CollectRadicals(ref mut current, _) = q.goal {
+                *current += 1;
+            }
+        }
+        self.collect_quest_rewards();
+    }
+
+    /// Check floor-based quests.
+    /// Check floor-based quests.
+    fn check_floor_quests(&mut self) {
+        let floor = self.floor_num;
+        for q in &mut self.quests {
+            if q.completed { continue; }
+            if let QuestGoal::ReachFloor(target) = q.goal {
+                if floor >= target {
+                    q.completed = true;
+                }
+            }
+        }
+        self.collect_quest_rewards();
+    }
+
+    /// Collect rewards from completed quests.
+    fn collect_quest_rewards(&mut self) {
+        for q in &mut self.quests {
+            if q.completed && q.gold_reward > 0 {
+                self.player.gold += q.gold_reward;
+                self.message = format!("Quest complete: {}! +{}g", q.description, q.gold_reward);
+                self.message_timer = 100;
+                q.gold_reward = 0;
+            }
+        }
+    }
+
+    /// Start a tone battle at a shrine.
+    fn start_tone_battle(&mut self) {
+        let (hanzi, tone) = self.pick_tone_battle_char();
+        if let Some(ref audio) = self.audio {
+            audio.play_chinese_tone(tone);
+        }
+        self.combat = CombatState::ToneBattle {
+            round: 0,
+            hanzi,
+            correct_tone: tone,
+            score: 0,
+            last_result: None,
+        };
+        self.message = "🔔 Tone Shrine! Listen and press 1-4 for the correct tone.".to_string();
+        self.message_timer = 120;
+    }
+
+    /// Pick a random character and extract its tone for the tone battle.
+    fn pick_tone_battle_char(&mut self) -> (&'static str, u8) {
+        let v = &vocab::VOCAB;
+        let idx = self.rng_next() as usize % v.len();
+        let entry = &v[idx];
+        let tone = entry.pinyin.chars().last()
+            .and_then(|c| c.to_digit(10))
+            .unwrap_or(1) as u8;
+        (entry.hanzi, tone)
+    }
+
+    /// Generate a random quest.
+    fn generate_quest(&mut self) -> Quest {
+        let floor = self.floor_num;
+        match self.rng_next() % 3 {
+            0 => {
+                let target = 3 + (floor / 3) as i32;
+                Quest {
+                    description: format!("Defeat {} enemies", target),
+                    goal: QuestGoal::KillEnemies(0, target),
+                    gold_reward: 15 + floor * 5,
+                    completed: false,
+                }
+            }
+            1 => {
+                let target_floor = floor + 2;
+                Quest {
+                    description: format!("Reach floor {}", target_floor),
+                    goal: QuestGoal::ReachFloor(target_floor),
+                    gold_reward: 20 + floor * 4,
+                    completed: false,
+                }
+            }
+            _ => {
+                let target = 3 + (floor / 2) as i32;
+                Quest {
+                    description: format!("Collect {} radicals", target),
+                    goal: QuestGoal::CollectRadicals(0, target),
+                    gold_reward: 12 + floor * 3,
+                    completed: false,
+                }
+            }
+        }
+    }
+
     fn generate_shop_items(&mut self) -> Vec<ShopItem> {
         let mut items = Vec::new();
 
@@ -716,12 +1034,18 @@ impl GameState {
         if let CombatState::Shopping { ref items, cursor } = self.combat.clone() {
             if cursor >= items.len() { return; }
             let item = &items[cursor];
-            if self.player.gold < item.cost {
-                self.message = format!("Not enough gold! Need {} (have {})", item.cost, self.player.gold);
+            // Merchant companion: 20% discount
+            let effective_cost = if self.companion == Some(Companion::Merchant) {
+                (item.cost as f32 * 0.8).ceil() as i32
+            } else {
+                item.cost
+            };
+            if self.player.gold < effective_cost {
+                self.message = format!("Not enough gold! Need {} (have {})", effective_cost, self.player.gold);
                 self.message_timer = 40;
                 return;
             }
-            self.player.gold -= item.cost;
+            self.player.gold -= effective_cost;
             if let Some(ref audio) = self.audio { audio.play_buy(); }
             match &item.kind {
                 ShopItemKind::Radical(ch) => {
@@ -1279,6 +1603,8 @@ impl GameState {
             popup,
             room_mod,
             self.listening_mode,
+            self.companion,
+            &self.quests,
         );
         if self.show_codex {
             let entries = self.codex.sorted_entries();
@@ -1380,6 +1706,9 @@ pub fn init_game() -> Result<(), JsValue> {
         last_spell: None,
         spell_combo_timer: 0,
         listening_mode: false,
+        companion: None,
+        guard_used_this_fight: false,
+        quests: Vec::new(),
         daily_mode: false,
         endless_mode: false,
         rng_state: seed,
@@ -1412,6 +1741,116 @@ pub fn init_game() -> Result<(), JsValue> {
             }
 
             // Class selection screen
+            // Tone Battle input
+            if matches!(s.combat, CombatState::ToneBattle { .. }) {
+                event.prevent_default();
+                if let CombatState::ToneBattle { round, hanzi, correct_tone, score, last_result } = s.combat.clone() {
+                    let chosen = match key.as_str() {
+                        "1" => Some(1u8),
+                        "2" => Some(2u8),
+                        "3" => Some(3u8),
+                        "4" => Some(4u8),
+                        "r" | "R" => {
+                            // Replay tone
+                            if let Some(ref audio) = s.audio {
+                                audio.play_chinese_tone(correct_tone);
+                            }
+                            None
+                        }
+                        "Escape" => {
+                            s.combat = CombatState::Explore;
+                            s.message = "Left the shrine.".to_string();
+                            s.message_timer = 40;
+                            s.render();
+                            return;
+                        }
+                        _ => None,
+                    };
+                    if let Some(tone) = chosen {
+                        let correct = tone == correct_tone;
+                        let new_score = if correct { score + 1 } else { score };
+                        if round >= 4 {
+                            // End of tone battle
+                            let bonus_dmg = new_score as i32;
+                            s.player.tone_bonus_damage = bonus_dmg;
+                            s.combat = CombatState::Explore;
+                            s.message = format!("Shrine complete! {}/5 correct — +{} bonus damage next fight!", new_score, bonus_dmg);
+                            s.message_timer = 120;
+                        } else {
+                            // Next round
+                            let (next_hanzi, next_tone) = s.pick_tone_battle_char();
+                            if let Some(ref audio) = s.audio {
+                                audio.play_chinese_tone(next_tone);
+                            }
+                            s.combat = CombatState::ToneBattle {
+                                round: round + 1,
+                                hanzi: next_hanzi,
+                                correct_tone: next_tone,
+                                score: new_score,
+                                last_result: Some(correct),
+                            };
+                            s.message = if correct {
+                                format!("✓ Correct! Round {}/5 — {}", round + 2, next_hanzi)
+                            } else {
+                                format!("✗ Wrong (was tone {})! Round {}/5 — {}", correct_tone, round + 2, next_hanzi)
+                            };
+                            s.message_timer = 80;
+                        }
+                    }
+                }
+                s.render();
+                return;
+            }
+
+            // Sentence Challenge input
+            if matches!(s.combat, CombatState::SentenceChallenge { .. }) {
+                event.prevent_default();
+                if let CombatState::SentenceChallenge { ref tiles, ref words, ref mut cursor, ref mut arranged, meaning } = s.combat {
+                    let remaining: Vec<usize> = tiles.iter().copied()
+                        .filter(|t| !arranged.contains(t))
+                        .collect();
+                    match key.as_str() {
+                        "ArrowLeft" | "a" => {
+                            if *cursor > 0 { *cursor -= 1; }
+                        }
+                        "ArrowRight" | "d" => {
+                            if *cursor + 1 < remaining.len() { *cursor += 1; }
+                        }
+                        "Enter" => {
+                            if *cursor < remaining.len() {
+                                arranged.push(remaining[*cursor]);
+                                *cursor = 0;
+                                // Check if complete
+                                if arranged.len() == words.len() {
+                                    let correct = arranged.iter().enumerate().all(|(i, &a)| a == i);
+                                    if correct {
+                                        s.player.gold += 30;
+                                        s.message = format!("✓ Correct! \"{}\" — +30g bonus!", meaning);
+                                    } else {
+                                        let correct_text: Vec<&str> = (0..words.len()).map(|i| words[i]).collect();
+                                        s.message = format!("✗ Wrong order! Correct: {}", correct_text.join(" "));
+                                    }
+                                    s.combat = CombatState::Explore;
+                                    s.message_timer = 120;
+                                }
+                            }
+                        }
+                        "Backspace" => {
+                            arranged.pop();
+                            *cursor = 0;
+                        }
+                        "Escape" => {
+                            s.combat = CombatState::Explore;
+                            s.message = "Skipped sentence challenge.".to_string();
+                            s.message_timer = 40;
+                        }
+                        _ => {}
+                    }
+                }
+                s.render();
+                return;
+            }
+
             if matches!(s.combat, CombatState::ClassSelect) {
                 event.prevent_default();
                 // Daily challenge

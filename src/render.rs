@@ -74,6 +74,8 @@ impl Renderer {
         achievement_popup: Option<(&str, &str)>,
         room_modifier: Option<crate::dungeon::RoomModifier>,
         listening_mode: bool,
+        companion: Option<crate::game::Companion>,
+        quests: &[crate::game::Quest],
     ) {
         // Screen shake offset
         let shake_x = if shake_timer > 0 { ((shake_timer as f64 * 1.7).sin() * 4.0) } else { 0.0 };
@@ -117,12 +119,14 @@ impl Renderer {
                         Tile::Forge => COL_FORGE,
                         Tile::Shop => COL_SHOP,
                         Tile::Chest => COL_CHEST,
+                        Tile::Npc(_) => "#55aacc",
+                        Tile::Shrine => "#ddaa55",
                     }
                 } else {
                     // revealed but not currently visible
                     match tile {
                         Tile::Wall => COL_WALL_REVEALED,
-                        Tile::Floor | Tile::StairsDown | Tile::Forge | Tile::Shop | Tile::Chest => COL_FLOOR_REVEALED,
+                        Tile::Floor | Tile::StairsDown | Tile::Forge | Tile::Shop | Tile::Chest | Tile::Npc(_) | Tile::Shrine => COL_FLOOR_REVEALED,
                         Tile::Corridor => COL_CORRIDOR_REVEALED,
                     }
                 };
@@ -167,6 +171,33 @@ impl Renderer {
                     self.ctx.set_text_align("center");
                     self.ctx
                         .fill_text("◆", screen_x + TILE_SIZE / 2.0, screen_y + TILE_SIZE * 0.75)
+                        .ok();
+                }
+
+                // NPC icon
+                if let Tile::Npc(npc_type) = tile {
+                    if visible {
+                        let icon = match npc_type {
+                            0 => "📚",
+                            1 => "🧘",
+                            2 => "💰",
+                            _ => "🛡",
+                        };
+                        self.ctx.set_font("16px monospace");
+                        self.ctx.set_text_align("center");
+                        self.ctx
+                            .fill_text(icon, screen_x + TILE_SIZE / 2.0, screen_y + TILE_SIZE * 0.75)
+                            .ok();
+                    }
+                }
+
+                // Shrine icon
+                if tile == Tile::Shrine && visible {
+                    self.ctx.set_fill_style_str("#ffffff");
+                    self.ctx.set_font("16px monospace");
+                    self.ctx.set_text_align("center");
+                    self.ctx
+                        .fill_text("🔔", screen_x + TILE_SIZE / 2.0, screen_y + TILE_SIZE * 0.75)
                         .ok();
                 }
 
@@ -414,6 +445,12 @@ impl Renderer {
         if listening_mode {
             self.ctx.set_fill_style_str("#aa66ff");
             self.ctx.fill_text("🎧 Listening", self.canvas_w - 12.0, eq_y).ok();
+            eq_y += 14.0;
+        }
+        // Companion indicator
+        if let Some(comp) = companion {
+            self.ctx.set_fill_style_str("#55ccaa");
+            self.ctx.fill_text(&format!("{} {}", comp.icon(), comp.name()), self.canvas_w - 12.0, eq_y).ok();
         }
 
         // ── Radical inventory (left side) ───────────────────────────────
@@ -525,6 +562,30 @@ impl Renderer {
         // Minimap (bottom-right)
         self.draw_minimap(level, player);
 
+        // Quest tracker (bottom-left)
+        if !quests.is_empty() {
+            let mut qy = self.canvas_h - 16.0 * quests.len() as f64 - 8.0;
+            self.ctx.set_font("11px monospace");
+            self.ctx.set_text_align("left");
+            for q in quests {
+                let status = if q.completed { "✓" } else { "○" };
+                let progress = match &q.goal {
+                    crate::game::QuestGoal::KillEnemies(c, t) => format!("{}/{}", c, t),
+                    crate::game::QuestGoal::ReachFloor(f) => format!("F{}", f),
+                    crate::game::QuestGoal::CollectRadicals(c, t) => format!("{}/{}", c, t),
+                    crate::game::QuestGoal::ForgeCharacter(ch) => ch.to_string(),
+                };
+                let color = if q.completed { "#66ff66" } else { "#aaaacc" };
+                self.ctx.set_fill_style_str(color);
+                self.ctx.fill_text(
+                    &format!("{} {} [{}]", status, q.description, progress),
+                    8.0,
+                    qy,
+                ).ok();
+                qy += 16.0;
+            }
+        }
+
         // ── Message bar (bottom-center) ─────────────────────────────────
         if !message.is_empty() {
             self.ctx.set_font("14px monospace");
@@ -586,9 +647,15 @@ impl Renderer {
                 } else {
                     self.ctx.set_fill_style_str("#aa66ff");
                     self.ctx.set_font("12px monospace");
+                    // Teacher companion reveals meaning even in listening mode
+                    let teacher_hint = if companion == Some(crate::game::Companion::Teacher) {
+                        &format!("📚 ({})", enemy.meaning)
+                    } else {
+                        "(listen carefully...)"
+                    };
                     self.ctx
                         .fill_text(
-                            "(listen carefully...)",
+                            teacher_hint,
                             self.canvas_w / 2.0,
                             box_y + 72.0,
                         )
@@ -905,13 +972,23 @@ impl Renderer {
                 }
 
                 let marker = if selected { "►" } else { " " };
-                let can_afford = player.gold >= item.cost;
+                let display_cost = if companion == Some(crate::game::Companion::Merchant) {
+                    (item.cost as f32 * 0.8).ceil() as i32
+                } else {
+                    item.cost
+                };
+                let can_afford = player.gold >= display_cost;
                 self.ctx.set_fill_style_str(if can_afford { "#ccffcc" } else { "#666" });
                 self.ctx.set_font("13px monospace");
                 self.ctx.set_text_align("left");
+                let price_label = if companion == Some(crate::game::Companion::Merchant) {
+                    format!("{} {} — {}g (💰 -20%)", marker, item.label, display_cost)
+                } else {
+                    format!("{} {} — {}g", marker, item.label, item.cost)
+                };
                 self.ctx
                     .fill_text(
-                        &format!("{} {} — {}g", marker, item.label, item.cost),
+                        &price_label,
                         box_x + 15.0,
                         y + 10.0,
                     )
@@ -929,6 +1006,115 @@ impl Renderer {
                     box_y + box_h + 14.0,
                 )
                 .ok();
+        }
+
+        // ── Sentence Challenge overlay ──────────────────────────────────
+        if let CombatState::SentenceChallenge { ref tiles, ref words, cursor, ref arranged, meaning } = combat {
+            let box_w = 380.0;
+            let box_h = 200.0;
+            let box_x = (self.canvas_w - box_w) / 2.0;
+            let box_y = 40.0;
+
+            self.ctx.set_fill_style_str("rgba(15,10,30,0.95)");
+            self.ctx.fill_rect(box_x, box_y, box_w, box_h);
+            self.ctx.set_stroke_style_str("#ff8866");
+            self.ctx.set_line_width(2.0);
+            self.ctx.stroke_rect(box_x, box_y, box_w, box_h);
+
+            // Title
+            self.ctx.set_fill_style_str("#ff8866");
+            self.ctx.set_font("bold 14px monospace");
+            self.ctx.set_text_align("center");
+            self.ctx.fill_text("Boss Phase 2 — Arrange the Sentence!", self.canvas_w / 2.0, box_y + 22.0).ok();
+
+            // Meaning hint
+            self.ctx.set_fill_style_str("#999");
+            self.ctx.set_font("12px monospace");
+            self.ctx.fill_text(&format!("Meaning: {}", meaning), self.canvas_w / 2.0, box_y + 42.0).ok();
+
+            // Arranged so far
+            let arranged_text: String = arranged.iter().map(|&i| words[i]).collect::<Vec<_>>().join(" ");
+            self.ctx.set_fill_style_str("#66ff66");
+            self.ctx.set_font("20px 'Noto Serif SC', serif");
+            self.ctx.fill_text(
+                if arranged_text.is_empty() { "..." } else { &arranged_text },
+                self.canvas_w / 2.0,
+                box_y + 75.0,
+            ).ok();
+
+            // Remaining tiles
+            let remaining: Vec<usize> = tiles.iter().copied()
+                .filter(|t| !arranged.contains(t))
+                .collect();
+            let tile_w = 60.0;
+            let total_w = remaining.len() as f64 * tile_w;
+            let start_x = (self.canvas_w - total_w) / 2.0;
+            for (i, &word_idx) in remaining.iter().enumerate() {
+                let tx = start_x + i as f64 * tile_w;
+                let ty = box_y + 100.0;
+                let selected = i == *cursor;
+                self.ctx.set_fill_style_str(if selected { "rgba(100,80,160,0.8)" } else { "rgba(40,30,60,0.8)" });
+                self.ctx.fill_rect(tx + 2.0, ty, tile_w - 4.0, 36.0);
+                self.ctx.set_stroke_style_str(if selected { "#ffcc33" } else { "#555" });
+                self.ctx.set_line_width(if selected { 2.0 } else { 1.0 });
+                self.ctx.stroke_rect(tx + 2.0, ty, tile_w - 4.0, 36.0);
+                self.ctx.set_fill_style_str(if selected { "#ffcc33" } else { "#ccccee" });
+                self.ctx.set_font("16px 'Noto Serif SC', serif");
+                self.ctx.set_text_align("center");
+                self.ctx.fill_text(words[word_idx], tx + tile_w / 2.0, ty + 24.0).ok();
+            }
+
+            // Controls hint
+            self.ctx.set_fill_style_str("#555");
+            self.ctx.set_font("10px monospace");
+            self.ctx.fill_text("←→ select  Enter=pick  Backspace=undo  Esc=skip", self.canvas_w / 2.0, box_y + box_h - 10.0).ok();
+        }
+
+        // ── Tone Battle overlay ─────────────────────────────────────────
+        if let CombatState::ToneBattle { round, hanzi, correct_tone, score, last_result } = combat {
+            let box_w = 320.0;
+            let box_h = 180.0;
+            let box_x = (self.canvas_w - box_w) / 2.0;
+            let box_y = 60.0;
+
+            self.ctx.set_fill_style_str("rgba(20,15,40,0.95)");
+            self.ctx.fill_rect(box_x, box_y, box_w, box_h);
+            self.ctx.set_stroke_style_str("#ddaa55");
+            self.ctx.set_line_width(2.0);
+            self.ctx.stroke_rect(box_x, box_y, box_w, box_h);
+
+            // Title
+            self.ctx.set_fill_style_str("#ddaa55");
+            self.ctx.set_font("bold 16px monospace");
+            self.ctx.set_text_align("center");
+            self.ctx.fill_text(&format!("🔔 Tone Shrine — Round {}/5", round + 1), self.canvas_w / 2.0, box_y + 24.0).ok();
+
+            // Character
+            self.ctx.set_fill_style_str("#ffcc33");
+            self.ctx.set_font("42px 'Noto Serif SC', 'SimSun', serif");
+            self.ctx.fill_text(hanzi, self.canvas_w / 2.0, box_y + 75.0).ok();
+
+            // Score
+            self.ctx.set_fill_style_str("#aaa");
+            self.ctx.set_font("12px monospace");
+            self.ctx.fill_text(&format!("Score: {}/{}", score, round + 1), self.canvas_w / 2.0, box_y + 95.0).ok();
+
+            // Tone options
+            let tones = ["1: ā (flat)", "2: á (rising)", "3: ǎ (dip)", "4: à (falling)"];
+            self.ctx.set_font("14px monospace");
+            for (i, label) in tones.iter().enumerate() {
+                let y = box_y + 115.0 + i as f64 * 18.0;
+                self.ctx.set_fill_style_str("#ccccee");
+                self.ctx.fill_text(label, self.canvas_w / 2.0, y).ok();
+            }
+
+            // Last result indicator
+            if let Some(was_correct) = last_result {
+                let (txt, col) = if *was_correct { ("✓", "#66ff66") } else { ("✗", "#ff6666") };
+                self.ctx.set_fill_style_str(col);
+                self.ctx.set_font("20px monospace");
+                self.ctx.fill_text(txt, box_x + 20.0, box_y + 24.0).ok();
+            }
         }
 
         // ── Game Over overlay ───────────────────────────────────────────

@@ -126,6 +126,8 @@ pub struct Player {
     pub charm: Option<&'static Equipment>,
     /// Enchantments on equipment slots: [weapon, armor, charm]
     pub enchantments: [Option<&'static str>; 3],
+    /// Bonus damage from tone shrine (used once, then reset)
+    pub tone_bonus_damage: i32,
 }
 
 impl Player {
@@ -151,6 +153,7 @@ impl Player {
             armor: None,
             charm: None,
             enchantments: [None; 3],
+            tone_bonus_damage: 0,
         }
     }
 

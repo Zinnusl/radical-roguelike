@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#ffcc33" />
   <title>Radical Dungeon</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -41,7 +43,91 @@
 <body>
   <h1>⚗️ Radical Dungeon</h1>
   <div id="loading">Loading WASM…</div>
-  <div class="controls">WASD/Arrows=move · Bump=fight · Type pinyin+Enter=attack · Tab/Space=spell · ⚒=forge · ▼=stairs</div>
+  <div class="controls">WASD/Arrows=move · Bump=fight · Type pinyin+Enter=attack · Tab/Space=spell · ⚒=forge · L=listen · C=codex</div>
+
+  <!-- Mobile touch controls -->
+  <div id="touch-controls">
+    <div id="dpad">
+      <button class="dpad-btn" id="btn-up" data-key="ArrowUp">▲</button>
+      <div class="dpad-row">
+        <button class="dpad-btn" id="btn-left" data-key="ArrowLeft">◀</button>
+        <button class="dpad-btn dpad-center" id="btn-wait">·</button>
+        <button class="dpad-btn" id="btn-right" data-key="ArrowRight">▶</button>
+      </div>
+      <button class="dpad-btn" id="btn-down" data-key="ArrowDown">▼</button>
+    </div>
+    <div id="action-btns">
+      <button class="action-btn" data-key="Enter">Enter</button>
+      <button class="action-btn" data-key="Escape">Esc</button>
+      <button class="action-btn" data-key=" ">Spell</button>
+      <button class="action-btn" data-key="Tab">Tab</button>
+    </div>
+  </div>
+
+  <style>
+    #touch-controls {
+      display: none;
+      position: fixed;
+      bottom: 10px;
+      left: 0;
+      right: 0;
+      padding: 0 12px;
+      z-index: 100;
+      justify-content: space-between;
+      align-items: flex-end;
+      pointer-events: none;
+    }
+    @media (pointer: coarse), (max-width: 800px) {
+      #touch-controls { display: flex; }
+    }
+    #dpad {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      pointer-events: auto;
+    }
+    .dpad-row {
+      display: flex;
+      gap: 2px;
+    }
+    .dpad-btn {
+      width: 52px;
+      height: 52px;
+      font-size: 22px;
+      background: rgba(255,204,51,0.15);
+      border: 1px solid rgba(255,204,51,0.4);
+      border-radius: 8px;
+      color: #ffcc33;
+      cursor: pointer;
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .dpad-btn:active { background: rgba(255,204,51,0.4); }
+    .dpad-center { background: rgba(100,100,100,0.1); border-color: #333; color: #555; }
+    #action-btns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      pointer-events: auto;
+    }
+    .action-btn {
+      width: 64px;
+      height: 44px;
+      font-size: 13px;
+      font-family: monospace;
+      background: rgba(100,150,255,0.15);
+      border: 1px solid rgba(100,150,255,0.4);
+      border-radius: 8px;
+      color: #88bbff;
+      cursor: pointer;
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .action-btn:active { background: rgba(100,150,255,0.4); }
+  </style>
 
   <script type="module">
     let start_game;
@@ -63,6 +149,25 @@
       console.error('Game init failed:', err);
       const el = document.getElementById('loading');
       if (el) el.textContent = 'Failed to load. See console.';
+    }
+
+    // Mobile touch controls — dispatch synthetic keyboard events
+    document.querySelectorAll('[data-key]').forEach(btn => {
+      const key = btn.dataset.key;
+      const fire = () => {
+        const canvas = document.getElementById('game-canvas');
+        if (canvas) {
+          canvas.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+        } else {
+          document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+        }
+      };
+      btn.addEventListener('touchstart', e => { e.preventDefault(); fire(); }, { passive: false });
+      btn.addEventListener('mousedown', e => { e.preventDefault(); fire(); });
+    });
+    // Register service worker for PWA
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
     }
   </script>
 </body>
