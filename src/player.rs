@@ -139,6 +139,68 @@ pub const EQUIPMENT_POOL: &[Equipment] = &[
     Equipment { name: "Phoenix Feather", slot: EquipSlot::Charm, effect: EquipEffect::HealOnKill(3) },
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Deity {
+    Jade,   // Life
+    Gale,   // Travel
+    Mirror, // Knowledge
+    Iron,   // War
+    Gold,   // Wealth
+}
+
+impl Deity {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Deity::Jade => "Jade Emperor (Life)",
+            Deity::Gale => "Wind Walker (Travel)",
+            Deity::Mirror => "Mirror Sage (Knowledge)",
+            Deity::Iron => "Iron General (War)",
+            Deity::Gold => "Golden Toad (Wealth)",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayerForm {
+    Human,
+    Flame,  // Immune to fire, burn on touch
+    Stone,  // High Def, slow
+    Mist,   // High Evasion, weak atk
+    Tiger,  // High Atk, fast
+}
+
+impl PlayerForm {
+    pub fn name(&self) -> &'static str {
+        match self {
+            PlayerForm::Human => "Human",
+            PlayerForm::Flame => "Flame Avatar",
+            PlayerForm::Stone => "Stone Golem",
+            PlayerForm::Mist => "Mist Spirit",
+            PlayerForm::Tiger => "Tiger Demon",
+        }
+    }
+
+    pub fn glyph(&self) -> &'static str {
+        match self {
+            PlayerForm::Human => "@",
+            PlayerForm::Flame => "火",
+            PlayerForm::Stone => "石",
+            PlayerForm::Mist => "气",
+            PlayerForm::Tiger => "虎",
+        }
+    }
+
+    pub fn color(&self) -> &'static str {
+        match self {
+            PlayerForm::Human => "#ffffff",
+            PlayerForm::Flame => "#ff5500",
+            PlayerForm::Stone => "#888888",
+            PlayerForm::Mist => "#aaddff",
+            PlayerForm::Tiger => "#ffaa00",
+        }
+    }
+}
+
 /// Player class specialization chosen at game start.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PlayerClass {
@@ -183,6 +245,12 @@ pub struct Player {
     pub shop_discount_pct: i32,
     /// Permanent spell potency bonus from meta progression
     pub spell_power_bonus: i32,
+    /// Active god favor (piety)
+    pub piety: Vec<(Deity, i32)>,
+    /// Current physical form
+    pub form: PlayerForm,
+    /// Turns remaining in current form (0 = permanent/human)
+    pub form_timer: i32,
 }
 
 impl Player {
@@ -211,6 +279,35 @@ impl Player {
             tone_bonus_damage: 0,
             shop_discount_pct: 0,
             spell_power_bonus: 0,
+            piety: Vec::new(),
+            form: PlayerForm::Human,
+            form_timer: 0,
+        }
+    }
+
+    pub fn get_piety(&self, deity: Deity) -> i32 {
+        self.piety.iter().find(|(d, _)| *d == deity).map(|(_, p)| *p).unwrap_or(0)
+    }
+
+    pub fn add_piety(&mut self, deity: Deity, amount: i32) {
+        if let Some((_, p)) = self.piety.iter_mut().find(|(d, _)| *d == deity) {
+            *p += amount;
+        } else {
+            self.piety.push((deity, amount));
+        }
+    }
+
+    pub fn set_form(&mut self, form: PlayerForm, duration: i32) {
+        self.form = form;
+        self.form_timer = duration;
+    }
+
+    pub fn tick_form(&mut self) {
+        if self.form_timer > 0 {
+            self.form_timer -= 1;
+            if self.form_timer == 0 {
+                self.form = PlayerForm::Human;
+            }
         }
     }
 

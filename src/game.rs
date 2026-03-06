@@ -13,7 +13,7 @@ use crate::dungeon::{compute_fov, AltarKind, DungeonLevel, RoomModifier, SealKin
 use crate::enemy::{BossKind, Enemy};
 use crate::particle::ParticleSystem;
 use crate::player::{
-    ItemKind, Player, PlayerClass, ITEM_KIND_COUNT, MYSTERY_ITEM_APPEARANCES, EQUIPMENT_POOL,
+    Deity, ItemKind, Player, PlayerClass, PlayerForm, ITEM_KIND_COUNT, MYSTERY_ITEM_APPEARANCES, EQUIPMENT_POOL,
 };
 use crate::radical::{self, Spell, SpellEffect};
 use crate::render::Renderer;
@@ -352,6 +352,20 @@ pub enum CombatState {
         meaning: &'static str,
         /// What this challenge resolves into
         mode: SentenceChallengeMode,
+    },
+    /// Player is offering an item at an altar
+    Offering {
+        altar_kind: AltarKind,
+        cursor: usize,
+    },
+    /// Player is selecting a potion to dip
+    DippingSource {
+        cursor: usize,
+    },
+    /// Player is selecting a target for the dipped potion
+    DippingTarget {
+        source_idx: usize,
+        cursor: usize, // 0..items.len() + 3 (equip slots)
     },
 }
 
@@ -777,53 +791,49 @@ impl GameState {
     }
 
     fn invoke_altar(&mut self, x: i32, y: i32, kind: AltarKind) {
-        let idx = self.level.idx(x, y);
-        self.level.tiles[idx] = Tile::Floor;
+        // Player is already on the tile (x, y) because move_to was called before this.
+        
+        // Find existing piety for this god, if any
+        let has_piety = self.player.piety.iter().any(|(d, _)| match (d, kind) {
+            (Deity::Jade, AltarKind::Jade) => true,
+            (Deity::Gale, AltarKind::Gale) => true,
+            (Deity::Mirror, AltarKind::Mirror) => true,
+            (Deity::Iron, AltarKind::Iron) => true,
+            (Deity::Gold, AltarKind::Gold) => true,
+            _ => false,
+        });
+
+        // Initialize piety if first time visiting this god type
+        if !has_piety {
+            let god = match kind {
+                AltarKind::Jade => Deity::Jade,
+                AltarKind::Gale => Deity::Gale,
+                AltarKind::Mirror => Deity::Mirror,
+                AltarKind::Iron => Deity::Iron,
+                AltarKind::Gold => Deity::Gold,
+            };
+            self.player.piety.push((god, 0));
+        }
+
         if let Some(ref audio) = self.audio {
             audio.play_spell();
         }
-        let (sx, sy) = self.tile_to_screen(x, y);
-        match kind {
-            AltarKind::Jade => {
-                self.player
-                    .statuses
-                    .retain(|status| !matches!(status.kind, status::StatusKind::Regen { .. }));
-                self.player.statuses.push(status::StatusInstance::new(
-                    status::StatusKind::Regen { heal: 1 },
-                    6,
-                ));
-                self.particles.spawn_heal(sx, sy, &mut self.rng_state);
-                self.flash = Some((70, 210, 120, 0.16));
-                self.message =
-                    "☯ Jade altar blessing — regenerate 1 HP per move for 6 turns.".to_string();
-            }
-            AltarKind::Gale => {
-                self.player
-                    .statuses
-                    .retain(|status| !matches!(status.kind, status::StatusKind::Haste));
-                self.player
-                    .statuses
-                    .push(status::StatusInstance::new(status::StatusKind::Haste, 6));
-                self.particles.spawn_teleport(sx, sy, &mut self.rng_state);
-                self.flash = Some((110, 190, 255, 0.14));
-                self.message =
-                    "✦ Gale altar blessing — haste quickens your steps for 6 turns.".to_string();
-            }
-            AltarKind::Mirror => {
-                self.player
-                    .statuses
-                    .retain(|status| !matches!(status.kind, status::StatusKind::Revealed));
-                self.player
-                    .statuses
-                    .push(status::StatusInstance::new(status::StatusKind::Revealed, 4));
-                self.reveal_entire_floor();
-                self.particles.spawn_shield(sx, sy, &mut self.rng_state);
-                self.flash = Some((180, 130, 255, 0.18));
-                self.message =
-                    "◈ Mirror altar blessing — hidden paths shimmer into view.".to_string();
-            }
-        }
-        self.message_timer = 100;
+
+        // Open Offering menu
+        self.combat = CombatState::Offering {
+            altar_kind: kind,
+            cursor: 0,
+        };
+        
+        let god_name = match kind {
+            AltarKind::Jade => "Jade Emperor",
+            AltarKind::Gale => "Wind Walker",
+            AltarKind::Mirror => "Mirror Sage",
+            AltarKind::Iron => "Iron General",
+            AltarKind::Gold => "Golden Toad",
+        };
+        self.message = format!("You kneel before the Altar of {}.", god_name);
+        self.message_timer = 255;
     }
 
     fn begin_sentence_challenge(&mut self, mode: SentenceChallengeMode, intro: String) {
@@ -1349,6 +1359,7 @@ impl GameState {
             }
         }
         let (pdmg, pheal) = status::tick_statuses(&mut self.player.statuses);
+        self.player.tick_form();
         if pdmg > 0 {
             self.player.hp -= pdmg;
             self.message = format!("☠ Poison deals {} damage!", pdmg);
@@ -1710,7 +1721,24 @@ impl GameState {
                 let warrior_bonus = if self.player.class == PlayerClass::Warrior { 1 } else { 0 };
                 let tone_bonus = self.player.tone_bonus_damage;
                 self.player.tone_bonus_damage = 0; // consumed
-                let hit_dmg = 2 + self.player.bonus_damage() + self.player.enchant_bonus_damage() + cursed_bonus + warrior_bonus + tone_bonus;
+                
+                let form_bonus = match self.player.form {
+                    PlayerForm::Tiger => 2,
+                    PlayerForm::Flame => 1,
+                    _ => 0,
+                };
+                let empowered_bonus = status::empowered_amount(&self.player.statuses);
+
+                let hit_dmg = 2 + self.player.bonus_damage() + self.player.enchant_bonus_damage() + cursed_bonus + warrior_bonus + tone_bonus + form_bonus + empowered_bonus;
+                
+                // Status application
+                if status::has_envenomed(&self.player.statuses) {
+                     self.enemies[enemy_idx].statuses.push(status::StatusInstance::new(status::StatusKind::Poison { damage: 2 }, 3));
+                }
+                if self.player.form == PlayerForm::Flame {
+                     self.enemies[enemy_idx].statuses.push(status::StatusInstance::new(status::StatusKind::Burn { damage: 1 }, 3));
+                }
+
                 let mut dealt_dmg = hit_dmg;
                 let mut elite_completed_cycle = false;
                 let mut elite_message: Option<String> = None;
@@ -2894,6 +2922,135 @@ impl GameState {
     }
 
     /// Restart after game over.
+    fn perform_offering(&mut self, altar: AltarKind, idx: usize) {
+        if idx >= self.player.items.len() { return; }
+        let item = self.player.items.remove(idx);
+        let deity = altar.deity();
+        let mut piety_gain = 0;
+        
+        // Basic offering logic
+        match (deity, item.kind()) {
+             (Deity::Jade, ItemKind::HealthPotion) => piety_gain = 5,
+             (Deity::Jade, _) => piety_gain = 1,
+             (Deity::Gale, ItemKind::HastePotion | ItemKind::TeleportScroll) => piety_gain = 5,
+             (Deity::Mirror, ItemKind::RevealScroll) => piety_gain = 5,
+             (Deity::Iron, ItemKind::StunBomb | ItemKind::PoisonFlask) => piety_gain = 5,
+             (Deity::Gold, _) => piety_gain = 2,
+             _ => piety_gain = 1,
+        }
+        
+        self.player.add_piety(deity, piety_gain);
+        self.message = format!("Offered {} to {}. (+{} favor).", item.name(), deity.name(), piety_gain);
+        self.message_timer = 90;
+        self.combat = CombatState::Explore;
+        if let Some(ref audio) = self.audio { audio.play_spell(); }
+    }
+
+    fn pray_at_altar(&mut self, altar: AltarKind) {
+        let deity = altar.deity();
+        let piety = self.player.get_piety(deity);
+        
+        if piety >= 20 {
+             // Grant Boon
+             self.player.add_piety(deity, -20);
+             match deity {
+                 Deity::Jade => {
+                     self.player.max_hp += 5;
+                     self.player.hp = self.player.max_hp;
+                     self.message = "Jade Emperor grants you vitality! (+5 Max HP)".to_string();
+                 }
+                 Deity::Gale => {
+                     self.player.set_form(PlayerForm::Mist, 50);
+                     self.message = "Wind Walker grants you form of Mist!".to_string();
+                 }
+                 Deity::Mirror => {
+                     for i in 0..ITEM_KIND_COUNT { self.identified_items[i] = true; }
+                     self.message = "Mirror Sage reveals all truths!".to_string();
+                 }
+                 Deity::Iron => {
+                     self.player.set_form(PlayerForm::Tiger, 50);
+                     self.message = "Iron General grants you form of Tiger!".to_string();
+                 }
+                 Deity::Gold => {
+                     self.player.gold += 100;
+                     self.message = "Golden Toad rains coins upon you!".to_string();
+                 }
+             }
+             // if let Some(ref audio) = self.audio { audio.play_level_up(); }
+        } else if piety < 0 {
+             // Smite
+             self.player.hp -= 5;
+             self.message = format!("{} is offended by your pestering! (-5 HP)", deity.name());
+             // if let Some(ref audio) = self.audio { audio.play_game_over(); }
+        } else {
+             self.message = format!("{} ignores you. (Favor: {})", deity.name(), piety);
+        }
+        self.message_timer = 120;
+    }
+
+    fn perform_dip(&mut self, source_idx: usize, target_cursor: usize) {
+        // target_cursor: 0=Weapon, 1=Armor, 2=Charm, 3+=Inventory Items (idx - 3)
+        // If target is an item, we need to be careful with indices because we remove the potion first.
+        
+        if source_idx >= self.player.items.len() { return; }
+        
+        // Remove potion first
+        let potion = self.player.items.remove(source_idx);
+        
+        // Adjust target index if it was an item
+        let effective_target_idx = if target_cursor >= 3 {
+             let raw_idx = target_cursor - 3;
+             if source_idx < raw_idx { raw_idx - 1 } else { raw_idx }
+        } else {
+             0 // unused
+        };
+        
+        match target_cursor {
+            0 => { // Weapon
+                 if let Some(_) = self.player.weapon {
+                      if matches!(potion.kind(), ItemKind::PoisonFlask) {
+                          self.message = "Coated weapon with poison! (Attacks poison enemies)".to_string();
+                          self.player.statuses.push(status::StatusInstance::new(
+                              status::StatusKind::Envenomed, 20
+                          ));
+                      } else if matches!(potion.kind(), ItemKind::HastePotion) {
+                          self.message = "Coated weapon with speed! (Attacks empowered)".to_string();
+                          self.player.statuses.push(status::StatusInstance::new(
+                              status::StatusKind::Empowered { amount: 1 }, 20
+                          ));
+                      } else {
+                          self.message = "Nothing happens.".to_string();
+                      }
+                 } else {
+                      self.message = "No weapon to coat.".to_string();
+                      self.player.add_item(potion); // Return item
+                 }
+            }
+            1 => { // Armor
+                 if let Some(_) = self.player.armor {
+                      self.message = "You wash your armor.".to_string();
+                 } else {
+                      self.message = "No armor.".to_string();
+                      self.player.add_item(potion);
+                 }
+            }
+            2 => { // Charm
+                 self.message = "You dip the charm. It sparkles.".to_string();
+            }
+            _ => { // Inventory Item
+                 if effective_target_idx < self.player.items.len() {
+                      self.message = "Mixing not yet implemented. Item returned.".to_string();
+                      self.player.add_item(potion);
+                 } else {
+                      // Invalid target (shouldn't happen)
+                      self.player.add_item(potion);
+                 }
+            }
+        }
+        self.combat = CombatState::Explore;
+        self.message_timer = 90;
+    }
+
     fn restart(&mut self) {
         self.total_runs += 1;
         self.save_high_score();
@@ -4105,6 +4262,107 @@ pub fn init_game() -> Result<(), JsValue> {
                 return;
             }
 
+            // Offering mode
+            if let CombatState::Offering { altar_kind, cursor } = s.combat {
+                event.prevent_default();
+                match key.as_str() {
+                    "Escape" => {
+                        s.combat = CombatState::Explore;
+                        s.message.clear();
+                        s.render();
+                    }
+                    "ArrowUp" | "w" => {
+                        if cursor > 0 {
+                            s.combat = CombatState::Offering { altar_kind, cursor: cursor - 1 };
+                        }
+                        s.render();
+                    }
+                    "ArrowDown" | "s" => {
+                        if cursor + 1 < s.player.items.len() {
+                            s.combat = CombatState::Offering { altar_kind, cursor: cursor + 1 };
+                        }
+                        s.render();
+                    }
+                    "Enter" => {
+                        s.perform_offering(altar_kind, cursor);
+                        s.render();
+                    }
+                    _ => {}
+                }
+                return;
+            }
+
+            // Dipping Source
+            if let CombatState::DippingSource { cursor } = s.combat {
+                event.prevent_default();
+                match key.as_str() {
+                    "Escape" => {
+                        s.combat = CombatState::Explore;
+                        s.message.clear();
+                        s.render();
+                    }
+                    "ArrowUp" | "w" => {
+                        if cursor > 0 {
+                            s.combat = CombatState::DippingSource { cursor: cursor - 1 };
+                        }
+                        s.render();
+                    }
+                    "ArrowDown" | "s" => {
+                        if cursor + 1 < s.player.items.len() {
+                            s.combat = CombatState::DippingSource { cursor: cursor + 1 };
+                        }
+                        s.render();
+                    }
+                    "Enter" => {
+                        if cursor < s.player.items.len() {
+                            let kind = s.player.items[cursor].kind();
+                            if matches!(kind, ItemKind::HealthPotion | ItemKind::PoisonFlask | ItemKind::HastePotion) {
+                                s.combat = CombatState::DippingTarget { source_idx: cursor, cursor: 0 };
+                                s.message = "Dip into what? (Equip/Items)".to_string();
+                            } else {
+                                s.message = "Can only dip potions!".to_string();
+                                s.message_timer = 60;
+                            }
+                        }
+                        s.render();
+                    }
+                    _ => {}
+                }
+                return;
+            }
+
+            // Dipping Target
+            if let CombatState::DippingTarget { source_idx, cursor } = s.combat {
+                event.prevent_default();
+                match key.as_str() {
+                    "Escape" => {
+                        s.combat = CombatState::Explore;
+                        s.message.clear();
+                        s.render();
+                    }
+                    "ArrowUp" | "w" => {
+                        if cursor > 0 {
+                            s.combat = CombatState::DippingTarget { source_idx, cursor: cursor - 1 };
+                        }
+                        s.render();
+                    }
+                    "ArrowDown" | "s" => {
+                        // 0=Wep, 1=Arm, 2=Chm, 3+=Items
+                        let max_cursor = 2 + s.player.items.len();
+                        if cursor < max_cursor {
+                            s.combat = CombatState::DippingTarget { source_idx, cursor: cursor + 1 };
+                        }
+                        s.render();
+                    }
+                    "Enter" => {
+                        s.perform_dip(source_idx, cursor);
+                        s.render();
+                    }
+                    _ => {}
+                }
+                return;
+            }
+
             // Shop mode
             if matches!(s.combat, CombatState::Shopping { .. }) {
                 event.prevent_default();
@@ -4177,13 +4435,50 @@ pub fn init_game() -> Result<(), JsValue> {
                     s.render();
                     return;
                 }
+                "o" | "O" => {
+                    if let Tile::Altar(kind) = s.level.tile(s.player.x, s.player.y) {
+                        if s.player.items.is_empty() {
+                            s.message = "You have nothing to offer.".to_string();
+                            s.message_timer = 60;
+                        } else {
+                            s.combat = CombatState::Offering { altar_kind: kind, cursor: 0 };
+                            s.message = format!("Offer to {}? Select item.", kind.name());
+                        }
+                    } else {
+                        s.message = "There is no altar here.".to_string();
+                        s.message_timer = 60;
+                    }
+                    s.render();
+                    return;
+                }
+                "p" | "P" => {
+                    if let Tile::Altar(kind) = s.level.tile(s.player.x, s.player.y) {
+                        s.pray_at_altar(kind);
+                    } else {
+                        s.message = "You pray to the void. Silence.".to_string();
+                        s.message_timer = 60;
+                    }
+                    s.render();
+                    return;
+                }
+                "D" => {
+                    if s.player.items.is_empty() {
+                         s.message = "Inventory empty.".to_string();
+                         s.message_timer = 60;
+                    } else {
+                        s.combat = CombatState::DippingSource { cursor: 0 };
+                        s.message = "Dip which potion?".to_string();
+                    }
+                    s.render();
+                    return;
+                }
                 _ => {}
             }
             let (dx, dy) = match key.as_str() {
                 "ArrowUp" | "w" | "W" => (0, -1),
                 "ArrowDown" | "s" | "S" => (0, 1),
                 "ArrowLeft" | "a" | "A" => (-1, 0),
-                "ArrowRight" | "d" | "D" => (1, 0),
+                "ArrowRight" | "d" => (1, 0),
                 _ => return,
             };
             event.prevent_default();

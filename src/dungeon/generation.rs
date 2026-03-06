@@ -3,6 +3,8 @@
 //! Splits a rectangular area recursively, places rooms in leaves,
 //! then connects sibling rooms with corridors.
 
+use crate::player::Deity;
+
 /// Simple PRNG (xorshift64) so we don't need an external crate.
 pub struct Rng(u64);
 
@@ -31,35 +33,63 @@ impl Rng {
 
 // ── Tile types ──────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum AltarKind {
     Jade,
     Gale,
     Mirror,
+    Iron,
+    Gold,
 }
 
 impl AltarKind {
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Jade => "☯",
-            Self::Gale => "✦",
-            Self::Mirror => "◈",
+            Self::Jade => "☯",   // Yin-Yang (Balance/Life)
+            Self::Gale => "✦",   // Sparkle/Wind
+            Self::Mirror => "◈", // Diamond/Reflection
+            Self::Iron => "⚔",   // Crossed Swords (War)
+            Self::Gold => "¥",   // Yen/Yuan (Wealth)
         }
     }
 
     pub fn color(self) -> &'static str {
         match self {
-            Self::Jade => "#66dd99",
-            Self::Gale => "#88ccff",
-            Self::Mirror => "#ddb8ff",
+            Self::Jade => "#66dd99",   // Green
+            Self::Gale => "#88ccff",   // Sky Blue
+            Self::Mirror => "#ddb8ff", // Purple
+            Self::Iron => "#ff5555",   // Red
+            Self::Gold => "#ffd700",   // Gold
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Jade => "Jade Altar",
+            Self::Gale => "Gale Altar",
+            Self::Mirror => "Mirror Altar",
+            Self::Iron => "Iron Altar",
+            Self::Gold => "Gold Altar",
+        }
+    }
+
+    pub fn deity(self) -> Deity {
+        match self {
+            Self::Jade => Deity::Jade,
+            Self::Gale => Deity::Gale,
+            Self::Mirror => Deity::Mirror,
+            Self::Iron => Deity::Iron,
+            Self::Gold => Deity::Gold,
         }
     }
 
     fn random(rng: &mut Rng) -> Self {
-        match rng.next_u64() % 3 {
+        match rng.next_u64() % 5 {
             0 => Self::Jade,
             1 => Self::Gale,
-            _ => Self::Mirror,
+            2 => Self::Mirror,
+            3 => Self::Iron,
+            _ => Self::Gold,
         }
     }
 }

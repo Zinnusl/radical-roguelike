@@ -10,7 +10,7 @@ use crate::dungeon::{AltarKind, DungeonLevel, SealKind, Tile};
 use crate::enemy::Enemy;
 use crate::game::{CombatState, GameSettings, TalentTree};
 use crate::particle::ParticleSystem;
-use crate::player::Player;
+use crate::player::{Player, PlayerForm};
 
 const TILE_SIZE: f64 = 24.0;
 
@@ -147,61 +147,83 @@ impl Renderer {
         let center_y = py + TILE_SIZE / 2.0 + (anim_t * 4.4).sin() * 1.4;
         let r = TILE_SIZE * 0.38;
 
-        // Glow
-        self.ctx.set_shadow_color("rgba(255,204,51,0.5)");
-        self.ctx.set_shadow_blur(12.0);
+        if player.form == PlayerForm::Human {
+            // Glow
+            self.ctx.set_shadow_color("rgba(255,204,51,0.5)");
+            self.ctx.set_shadow_blur(12.0);
 
-        // Body circle
-        self.ctx.set_fill_style_str(COL_PLAYER);
-        self.ctx.begin_path();
-        self.ctx
-            .arc(center_x, center_y, r, 0.0, std::f64::consts::TAU)
-            .ok();
-        self.ctx.fill();
+            // Body circle
+            self.ctx.set_fill_style_str(COL_PLAYER);
+            self.ctx.begin_path();
+            self.ctx
+                .arc(center_x, center_y, r, 0.0, std::f64::consts::TAU)
+                .ok();
+            self.ctx.fill();
 
-        // Outline
-        self.ctx.set_stroke_style_str(COL_PLAYER_OUTLINE);
-        self.ctx.set_line_width(2.0);
-        self.ctx.stroke();
+            // Outline
+            self.ctx.set_stroke_style_str(COL_PLAYER_OUTLINE);
+            self.ctx.set_line_width(2.0);
+            self.ctx.stroke();
 
-        // Eyes
-        self.ctx.set_shadow_blur(0.0);
-        self.ctx.set_fill_style_str("#222");
-        self.ctx.begin_path();
-        self.ctx
-            .arc(
-                center_x - r * 0.3,
-                center_y - r * 0.15,
-                r * 0.15,
-                0.0,
-                std::f64::consts::TAU,
-            )
-            .ok();
-        self.ctx.fill();
-        self.ctx.begin_path();
-        self.ctx
-            .arc(
-                center_x + r * 0.3,
-                center_y - r * 0.15,
-                r * 0.15,
-                0.0,
-                std::f64::consts::TAU,
-            )
-            .ok();
-        self.ctx.fill();
+            // Eyes
+            self.ctx.set_shadow_blur(0.0);
+            self.ctx.set_fill_style_str("#222");
+            self.ctx.begin_path();
+            self.ctx
+                .arc(
+                    center_x - r * 0.3,
+                    center_y - r * 0.15,
+                    r * 0.15,
+                    0.0,
+                    std::f64::consts::TAU,
+                )
+                .ok();
+            self.ctx.fill();
+            self.ctx.begin_path();
+            self.ctx
+                .arc(
+                    center_x + r * 0.3,
+                    center_y - r * 0.15,
+                    r * 0.15,
+                    0.0,
+                    std::f64::consts::TAU,
+                )
+                .ok();
+            self.ctx.fill();
 
-        // Ears (triangles)
-        self.ctx.set_fill_style_str(COL_PLAYER);
-        self.ctx.begin_path();
-        self.ctx.move_to(center_x - r * 0.6, center_y - r * 0.5);
-        self.ctx.line_to(center_x - r * 0.15, center_y - r * 1.15);
-        self.ctx.line_to(center_x + r * 0.1, center_y - r * 0.5);
-        self.ctx.fill();
-        self.ctx.begin_path();
-        self.ctx.move_to(center_x + r * 0.6, center_y - r * 0.5);
-        self.ctx.line_to(center_x + r * 0.15, center_y - r * 1.15);
-        self.ctx.line_to(center_x - r * 0.1, center_y - r * 0.5);
-        self.ctx.fill();
+            // Ears (triangles)
+            self.ctx.set_fill_style_str(COL_PLAYER);
+            self.ctx.begin_path();
+            self.ctx.move_to(center_x - r * 0.6, center_y - r * 0.5);
+            self.ctx.line_to(center_x - r * 0.15, center_y - r * 1.15);
+            self.ctx.line_to(center_x + r * 0.1, center_y - r * 0.5);
+            self.ctx.fill();
+            self.ctx.begin_path();
+            self.ctx.move_to(center_x + r * 0.6, center_y - r * 0.5);
+            self.ctx.line_to(center_x + r * 0.15, center_y - r * 1.15);
+            self.ctx.line_to(center_x - r * 0.1, center_y - r * 0.5);
+            self.ctx.fill();
+        } else {
+            // Render Form Glyph
+            self.ctx.set_shadow_color(player.form.color());
+            self.ctx.set_shadow_blur(15.0);
+
+            self.ctx.set_font("bold 22px serif");
+            self.ctx.set_text_align("center");
+            self.ctx.set_text_baseline("middle");
+            self.ctx.set_fill_style_str(player.form.color());
+            self.ctx.fill_text(player.form.glyph(), center_x, center_y).ok();
+            
+            // Draw timer bar below if temporal
+            if player.form_timer > 0 {
+                self.ctx.set_shadow_blur(0.0);
+                self.ctx.set_fill_style_str("#444");
+                self.ctx.fill_rect(center_x - 10.0, center_y + 12.0, 20.0, 3.0);
+                self.ctx.set_fill_style_str(player.form.color());
+                let pct = (player.form_timer as f64 / 50.0).min(1.0); // Assume max 50 for bar scaling
+                self.ctx.fill_rect(center_x - 10.0, center_y + 12.0, 20.0 * pct, 3.0);
+            }
+        }
 
         // Reset shadow
         self.ctx.set_shadow_blur(0.0);
@@ -1078,6 +1100,21 @@ impl Renderer {
                 .ok();
         }
 
+        // ── Offering / Altar overlay ────────────────────────────────────
+        if let CombatState::Offering { altar_kind, cursor } = combat {
+            self.draw_offering_overlay(player, item_labels, *altar_kind, *cursor);
+        }
+
+        // ── Dipping Source overlay ──────────────────────────────────────
+        if let CombatState::DippingSource { cursor } = combat {
+            self.draw_dipping_source_overlay(player, item_labels, *cursor);
+        }
+
+        // ── Dipping Target overlay ──────────────────────────────────────
+        if let CombatState::DippingTarget { source_idx, cursor } = combat {
+            self.draw_dipping_target_overlay(player, item_labels, *source_idx, *cursor);
+        }
+
         // ── Sentence Challenge overlay ──────────────────────────────────
         if let CombatState::SentenceChallenge {
             ref tiles,
@@ -1607,6 +1644,223 @@ impl Renderer {
         }
     }
 
+    fn draw_offering_overlay(
+        &self,
+        player: &Player,
+        item_labels: &[String],
+        altar_kind: crate::dungeon::AltarKind,
+        cursor: usize,
+    ) {
+        let box_w = 360.0;
+        let items_len = player.items.len().max(1);
+        let box_h = 100.0 + items_len as f64 * 28.0;
+        let box_x = (self.canvas_w - box_w) / 2.0;
+        let box_y = 60.0;
+
+        self.ctx.set_fill_style_str("rgba(15,20,30,0.95)");
+        self.ctx.fill_rect(box_x, box_y, box_w, box_h);
+        self.ctx.set_stroke_style_str("#ffaa44");
+        self.ctx.set_line_width(2.0);
+        self.ctx.stroke_rect(box_x, box_y, box_w, box_h);
+
+        let god_name = match altar_kind {
+            crate::dungeon::AltarKind::Jade => "Jade Emperor",
+            crate::dungeon::AltarKind::Gale => "Wind Walker",
+            crate::dungeon::AltarKind::Mirror => "Mirror Sage",
+            crate::dungeon::AltarKind::Iron => "Iron General",
+            crate::dungeon::AltarKind::Gold => "Golden Toad",
+        };
+
+        // Find current piety
+        let piety = player.piety.iter().find(|(d, _)| match (d, altar_kind) {
+            (crate::player::Deity::Jade, crate::dungeon::AltarKind::Jade) => true,
+            (crate::player::Deity::Gale, crate::dungeon::AltarKind::Gale) => true,
+            (crate::player::Deity::Mirror, crate::dungeon::AltarKind::Mirror) => true,
+            (crate::player::Deity::Iron, crate::dungeon::AltarKind::Iron) => true,
+            (crate::player::Deity::Gold, crate::dungeon::AltarKind::Gold) => true,
+            _ => false,
+        }).map(|(_, p)| *p).unwrap_or(0);
+
+        self.ctx.set_fill_style_str("#ffaa44");
+        self.ctx.set_font("bold 16px monospace");
+        self.ctx.set_text_align("center");
+        self.ctx.fill_text(&format!("Altar of {}", god_name), self.canvas_w / 2.0, box_y + 24.0).ok();
+
+        self.ctx.set_font("12px monospace");
+        self.ctx.set_fill_style_str("#ffd700");
+        self.ctx.fill_text(&format!("Favor: {}", piety), self.canvas_w / 2.0, box_y + 42.0).ok();
+
+        self.ctx.set_fill_style_str("#aaaaaa");
+        self.ctx.fill_text("Select item to offer:", self.canvas_w / 2.0, box_y + 64.0).ok();
+
+        if player.items.is_empty() {
+             self.ctx.set_fill_style_str("#888");
+             self.ctx.set_font("14px monospace");
+             self.ctx.fill_text("(Empty Inventory)", self.canvas_w / 2.0, box_y + 90.0).ok();
+        } else {
+             for (i, label) in item_labels.iter().enumerate() {
+                 let y = box_y + 90.0 + i as f64 * 28.0;
+                 let selected = i == cursor;
+
+                 if selected {
+                     self.ctx.set_fill_style_str("rgba(255,170,68,0.2)");
+                     self.ctx.fill_rect(box_x + 10.0, y - 18.0, box_w - 20.0, 24.0);
+                 }
+
+                 self.ctx.set_fill_style_str(if selected { "#ffffff" } else { "#cccccc" });
+                 self.ctx.set_font("14px monospace");
+                 self.ctx.set_text_align("left");
+                 self.ctx.fill_text(label, box_x + 20.0, y).ok();
+             }
+        }
+
+        // Footer help
+        self.ctx.set_text_align("center");
+        self.ctx.set_fill_style_str("#7784aa");
+        self.ctx.set_font("11px monospace");
+        self.ctx.fill_text(
+            "Enter=offer  P=pray (cost 20)  Esc=leave",
+            self.canvas_w / 2.0,
+            box_y + box_h - 12.0,
+        ).ok();
+    }
+
+    fn draw_dipping_source_overlay(
+        &self,
+        player: &Player,
+        item_labels: &[String],
+        cursor: usize,
+    ) {
+        let box_w = 320.0;
+        let items_len = player.items.len().max(1);
+        let box_h = 80.0 + items_len as f64 * 28.0;
+        let box_x = (self.canvas_w - box_w) / 2.0;
+        let box_y = 60.0;
+
+        self.ctx.set_fill_style_str("rgba(15,20,30,0.95)");
+        self.ctx.fill_rect(box_x, box_y, box_w, box_h);
+        self.ctx.set_stroke_style_str("#88aaff");
+        self.ctx.set_line_width(2.0);
+        self.ctx.stroke_rect(box_x, box_y, box_w, box_h);
+
+        self.ctx.set_fill_style_str("#88aaff");
+        self.ctx.set_font("bold 16px monospace");
+        self.ctx.set_text_align("center");
+        self.ctx.fill_text("Dip what? (Select Potion)", self.canvas_w / 2.0, box_y + 24.0).ok();
+
+        if player.items.is_empty() {
+             self.ctx.set_fill_style_str("#888");
+             self.ctx.set_font("14px monospace");
+             self.ctx.fill_text("(Empty)", self.canvas_w / 2.0, box_y + 50.0).ok();
+        } else {
+             for (i, label) in item_labels.iter().enumerate() {
+                 let y = box_y + 50.0 + i as f64 * 28.0;
+                 let selected = i == cursor;
+
+                 if selected {
+                     self.ctx.set_fill_style_str("rgba(100,120,200,0.3)");
+                     self.ctx.fill_rect(box_x + 10.0, y - 18.0, box_w - 20.0, 24.0);
+                 }
+
+                 self.ctx.set_fill_style_str(if selected { "#ffffff" } else { "#aaaaaa" });
+                 self.ctx.set_font("14px monospace");
+                 self.ctx.set_text_align("left");
+                 self.ctx.fill_text(label, box_x + 20.0, y).ok();
+             }
+        }
+
+        self.ctx.set_text_align("center");
+        self.ctx.set_fill_style_str("#7784aa");
+        self.ctx.set_font("11px monospace");
+        self.ctx.fill_text(
+            "Enter=select  Esc=cancel",
+            self.canvas_w / 2.0,
+            box_y + box_h - 12.0,
+        ).ok();
+    }
+
+    fn draw_dipping_target_overlay(
+        &self,
+        player: &Player,
+        item_labels: &[String],
+        source_idx: usize,
+        cursor: usize,
+    ) {
+        let items_len = player.items.len().max(1);
+        let total_rows = 3 + items_len;
+        let box_w = 340.0;
+        let box_h = 70.0 + total_rows as f64 * 28.0;
+        let box_x = (self.canvas_w - box_w) / 2.0;
+        let box_y = 60.0;
+
+        self.ctx.set_fill_style_str("rgba(15,20,30,0.95)");
+        self.ctx.fill_rect(box_x, box_y, box_w, box_h);
+        self.ctx.set_stroke_style_str("#88aaff");
+        self.ctx.set_line_width(2.0);
+        self.ctx.stroke_rect(box_x, box_y, box_w, box_h);
+
+        self.ctx.set_fill_style_str("#88aaff");
+        self.ctx.set_font("bold 16px monospace");
+        self.ctx.set_text_align("center");
+        self.ctx.fill_text("Dip into what?", self.canvas_w / 2.0, box_y + 24.0).ok();
+
+        let mut y = box_y + 50.0;
+
+        // Equipment
+        let equips = ["Weapon", "Armor", "Charm"];
+        for i in 0..3 {
+            let selected = cursor == i;
+             if selected {
+                 self.ctx.set_fill_style_str("rgba(100,120,200,0.3)");
+                 self.ctx.fill_rect(box_x + 10.0, y - 18.0, box_w - 20.0, 24.0);
+             }
+            self.ctx.set_fill_style_str(if selected { "#ffffff" } else { "#aaaaaa" });
+            self.ctx.set_font("14px monospace");
+            self.ctx.set_text_align("left");
+            let name = match i {
+                0 => equipment_name(player.weapon, player.enchantments[0]),
+                1 => equipment_name(player.armor, player.enchantments[1]),
+                _ => equipment_name(player.charm, player.enchantments[2]),
+            };
+            self.ctx.fill_text(&format!("{}: {}", equips[i], name), box_x + 20.0, y).ok();
+            y += 28.0;
+        }
+
+        // Items
+        if player.items.is_empty() {
+             self.ctx.set_fill_style_str("#888");
+             self.ctx.fill_text("(Empty Inventory)", box_x + 20.0, y).ok();
+        } else {
+            for (i, label) in item_labels.iter().enumerate() {
+                let display_idx = 3 + i;
+                let selected = cursor == display_idx;
+
+                if selected {
+                     self.ctx.set_fill_style_str("rgba(100,120,200,0.3)");
+                     self.ctx.fill_rect(box_x + 10.0, y - 18.0, box_w - 20.0, 24.0);
+                }
+
+                let color = if i == source_idx { "#6688aa" } else if selected { "#ffffff" } else { "#aaaaaa" };
+                self.ctx.set_fill_style_str(color);
+                self.ctx.set_font("14px monospace");
+                self.ctx.set_text_align("left");
+
+                let suffix = if i == source_idx { " (Source)" } else { "" };
+                self.ctx.fill_text(&format!("{}{}", label, suffix), box_x + 20.0, y).ok();
+                y += 28.0;
+            }
+        }
+
+        self.ctx.set_text_align("center");
+        self.ctx.set_fill_style_str("#7784aa");
+        self.ctx.set_font("11px monospace");
+        self.ctx.fill_text(
+            "Enter=select  Esc=cancel",
+            self.canvas_w / 2.0,
+            box_y + box_h - 12.0,
+        ).ok();
+    }
+
     fn draw_help_overlay(&self, combat: &CombatState, listening_mode: bool) {
         let mut lines = vec![
             "Explore: WASD/Arrows move  1-5 use items".to_string(),
@@ -1659,6 +1913,19 @@ impl Renderer {
             CombatState::Explore => {
                 lines.push("Script seals can flood rooms, raise spikes, or summon ambushes.".to_string());
                 "Quick Reference"
+            }
+            CombatState::Offering { .. } => {
+                lines.push("Altar: Select item to sacrifice for piety".to_string());
+                lines.push("P pray (costs 20 piety)  Esc cancel".to_string());
+                "Altar Controls"
+            }
+            CombatState::DippingSource { .. } => {
+                lines.push("Dipping: Select a potion to apply".to_string());
+                "Dip Controls"
+            }
+            CombatState::DippingTarget { .. } => {
+                lines.push("Dipping: Select weapon/armor/charm to coat".to_string());
+                "Dip Controls"
             }
         };
 
@@ -2510,6 +2777,8 @@ fn altar_fill(kind: AltarKind) -> &'static str {
         AltarKind::Jade => "#30563f",
         AltarKind::Gale => "#334d74",
         AltarKind::Mirror => "#5a456e",
+        AltarKind::Iron => "#4a4a4a",
+        AltarKind::Gold => "#665522",
     }
 }
 
@@ -2518,6 +2787,8 @@ fn altar_revealed_fill(kind: AltarKind) -> &'static str {
         AltarKind::Jade => "#214231",
         AltarKind::Gale => "#243b56",
         AltarKind::Mirror => "#443255",
+        AltarKind::Iron => "#333333",
+        AltarKind::Gold => "#443a1a",
     }
 }
 
@@ -2526,6 +2797,8 @@ fn altar_plate_fill(kind: AltarKind) -> &'static str {
         AltarKind::Jade => "rgba(102,221,153,0.14)",
         AltarKind::Gale => "rgba(136,204,255,0.14)",
         AltarKind::Mirror => "rgba(221,184,255,0.14)",
+        AltarKind::Iron => "rgba(200,200,200,0.14)",
+        AltarKind::Gold => "rgba(255,215,0,0.14)",
     }
 }
 
