@@ -640,33 +640,10 @@ impl Renderer {
                 .ok();
         }
 
-        // ── Radical inventory (left side) ───────────────────────────────
-        if !player.radicals.is_empty() {
-            let inv_x = 12.0;
-            let inv_y = 44.0;
-            self.ctx.set_font("11px monospace");
-            self.ctx.set_text_align("left");
-            self.ctx.set_fill_style_str("#ff8844");
-            self.ctx.fill_text("Radicals:", inv_x, inv_y).ok();
-            self.ctx.set_font("14px 'Noto Serif SC', 'SimSun', serif");
-            self.ctx.set_fill_style_str("#ffaa66");
-            let rad_str: String = player
-                .radicals
-                .iter()
-                .copied()
-                .collect::<Vec<_>>()
-                .join(" ");
-            self.ctx.fill_text(&rad_str, inv_x, inv_y + 16.0).ok();
-        }
-
-        // ── Spell bar (below radicals) ──────────────────────────────────
+        // ── Spell bar (left side) ────────────────────────────────────────
         if !player.spells.is_empty() {
             let sp_x = 12.0;
-            let sp_y = if player.radicals.is_empty() {
-                44.0
-            } else {
-                78.0
-            };
+            let sp_y = 44.0;
             self.ctx.set_font("11px monospace");
             self.ctx.set_text_align("left");
             self.ctx.set_fill_style_str("#44aaff");
@@ -695,17 +672,10 @@ impl Renderer {
         // ── Item inventory (below spells, left side) ────────────────────
         if !player.items.is_empty() {
             let spell_count = player.spells.len();
-            let base_y = if player.radicals.is_empty() && player.spells.is_empty() {
+            let base_y = if player.spells.is_empty() {
                 44.0
-            } else if player.spells.is_empty() {
-                78.0
             } else {
-                let sp_y = if player.radicals.is_empty() {
-                    44.0
-                } else {
-                    78.0
-                };
-                sp_y + 16.0 + spell_count as f64 * 16.0 + 8.0
+                44.0 + 16.0 + spell_count as f64 * 16.0 + 8.0
             };
             self.ctx.set_font("11px monospace");
             self.ctx.set_text_align("left");

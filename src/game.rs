@@ -2692,11 +2692,6 @@ impl GameState {
         self.typing.pop();
     }
 
-    /// Toggle a radical index in forge selection.
-    fn forge_toggle(&mut self, _radical_idx: usize) {
-        // No-op: forge now uses recipe list, not radical selection
-    }
-
     fn forge_submit(&mut self) {
         let recipe_idx = if let CombatState::Forging {
             ref recipes,
@@ -5031,7 +5026,9 @@ pub fn init_game() -> Result<(), JsValue> {
         let state = Rc::clone(&state);
         let closure = Closure::<dyn FnMut(KeyboardEvent)>::new(move |event: KeyboardEvent| {
             let key = event.key();
-            let mut s = state.borrow_mut();
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
 
             // Resume audio context on first interaction (browser requirement)
             if let Some(ref audio) = s.audio {
@@ -5444,11 +5441,6 @@ pub fn init_game() -> Result<(), JsValue> {
                             }
                         }
                         s.typing.clear();
-                        s.render();
-                    }
-                    "q" | "Q" => {
-                        // Cycle selected spell
-                        s.player.cycle_spell();
                         s.render();
                     }
                     " " => {
@@ -5993,8 +5985,14 @@ pub fn init_game() -> Result<(), JsValue> {
         let g = Rc::clone(&f);
         *g.borrow_mut() = Some(Closure::new(move || {
             {
-                let mut s = state.borrow_mut();
-                // Tick music
+                let Ok(mut s) = state.try_borrow_mut() else {
+                    if let Some(win) = window() {
+                        let _ = win.request_animation_frame(
+                            f.borrow().as_ref().unwrap().as_ref().unchecked_ref(),
+                        );
+                    }
+                    return;
+                }; // Tick music
                 let mood = match s.combat {
                     CombatState::Fighting { enemy_idx, .. } => {
                         if enemy_idx < s.enemies.len() && s.enemies[enemy_idx].is_boss {

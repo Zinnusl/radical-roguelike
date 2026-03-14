@@ -205,12 +205,6 @@ impl Audio {
         self.tone(784.0, 0.2, 0.08, OscillatorType::Sine);
     }
 
-    /// Forge failure
-    pub fn play_forge_fail(&self) {
-        self.tone(200.0, 0.15, 0.12, OscillatorType::Triangle);
-        self.tone(160.0, 0.2, 0.1, OscillatorType::Triangle);
-    }
-
     /// Spell cast
     pub fn play_spell(&self) {
         self.tone(880.0, 0.06, 0.1, OscillatorType::Sine);

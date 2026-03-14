@@ -645,6 +645,7 @@ pub const RECIPES: &[Recipe] = &[
 ];
 
 /// Try to forge a character from a set of radicals. Order-independent.
+#[allow(dead_code)]
 pub fn try_forge(radicals: &[&str]) -> Option<&'static Recipe> {
     for recipe in RECIPES {
         if recipe.inputs.len() == radicals.len() {
@@ -675,6 +676,7 @@ pub fn try_forge(radicals: &[&str]) -> Option<&'static Recipe> {
 
 /// Find recipes that are a near-miss for the given radicals.
 /// Returns hints like "You have 2/3 radicals for 明 (bright)".
+#[allow(dead_code)]
 pub fn near_miss_hints(radicals: &[&str]) -> Vec<String> {
     let mut hints = Vec::new();
     for recipe in RECIPES {
