@@ -74,8 +74,7 @@ fn cast_light(
                 }
             }
 
-            let is_wall = !level.in_bounds(map_x, map_y)
-                || !level.tile(map_x, map_y).is_walkable();
+            let is_wall = !level.in_bounds(map_x, map_y) || !level.tile(map_x, map_y).is_walkable();
 
             if blocked {
                 if is_wall {

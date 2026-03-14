@@ -108,9 +108,15 @@ impl Audio {
         osc.frequency().set_value(freq);
         let now = self.ctx.current_time();
         gain.gain().set_value(0.0);
-        gain.gain().linear_ramp_to_value_at_time(volume, now + 0.3).ok();
-        gain.gain().linear_ramp_to_value_at_time(volume, now + duration - 0.5).ok();
-        gain.gain().linear_ramp_to_value_at_time(0.0, now + duration).ok();
+        gain.gain()
+            .linear_ramp_to_value_at_time(volume, now + 0.3)
+            .ok();
+        gain.gain()
+            .linear_ramp_to_value_at_time(volume, now + duration - 0.5)
+            .ok();
+        gain.gain()
+            .linear_ramp_to_value_at_time(0.0, now + duration)
+            .ok();
         let _ = osc.connect_with_audio_node(&gain);
         let _ = gain.connect_with_audio_node(&self.ctx.destination());
         let _ = osc.start();
@@ -135,7 +141,9 @@ impl Audio {
         osc.frequency().set_value(freq);
         let now = self.ctx.current_time();
         gain.gain().set_value(volume);
-        gain.gain().linear_ramp_to_value_at_time(0.0, now + duration).ok();
+        gain.gain()
+            .linear_ramp_to_value_at_time(0.0, now + duration)
+            .ok();
         let _ = osc.connect_with_audio_node(&gain);
         let _ = gain.connect_with_audio_node(&self.ctx.destination());
         let _ = osc.start();
@@ -255,6 +263,12 @@ impl Audio {
         self.tone(180.0, 0.12, 0.05, OscillatorType::Sawtooth);
     }
 
+    pub fn play_streak_ding(&self) {
+        self.tone(660.0, 0.06, 0.10, OscillatorType::Sine);
+        self.tone(880.0, 0.08, 0.09, OscillatorType::Sine);
+        self.tone(1100.0, 0.12, 0.07, OscillatorType::Sine);
+    }
+
     /// Play a Chinese tone contour for listening mode.
     /// tone_num: 1-4 (Chinese tones), base_freq ~300 Hz for a natural voice range.
     pub fn play_chinese_tone(&self, tone_num: u8) {
@@ -274,8 +288,12 @@ impl Audio {
         let dur = 0.5;
         let volume = 0.12 * self.sfx_volume;
         gain.gain().set_value(volume);
-        gain.gain().linear_ramp_to_value_at_time(volume, now + dur - 0.1).ok();
-        gain.gain().linear_ramp_to_value_at_time(0.0, now + dur).ok();
+        gain.gain()
+            .linear_ramp_to_value_at_time(volume, now + dur - 0.1)
+            .ok();
+        gain.gain()
+            .linear_ramp_to_value_at_time(0.0, now + dur)
+            .ok();
 
         match tone_num {
             1 => {
@@ -285,18 +303,26 @@ impl Audio {
             2 => {
                 // Tone 2: rising (250 → 380 Hz)
                 osc.frequency().set_value(250.0);
-                osc.frequency().linear_ramp_to_value_at_time(380.0, now + dur).ok();
+                osc.frequency()
+                    .linear_ramp_to_value_at_time(380.0, now + dur)
+                    .ok();
             }
             3 => {
                 // Tone 3: dipping (280 → 220 → 300 Hz)
                 osc.frequency().set_value(280.0);
-                osc.frequency().linear_ramp_to_value_at_time(220.0, now + dur * 0.5).ok();
-                osc.frequency().linear_ramp_to_value_at_time(300.0, now + dur).ok();
+                osc.frequency()
+                    .linear_ramp_to_value_at_time(220.0, now + dur * 0.5)
+                    .ok();
+                osc.frequency()
+                    .linear_ramp_to_value_at_time(300.0, now + dur)
+                    .ok();
             }
             4 => {
                 // Tone 4: falling (380 → 200 Hz)
                 osc.frequency().set_value(380.0);
-                osc.frequency().linear_ramp_to_value_at_time(200.0, now + dur).ok();
+                osc.frequency()
+                    .linear_ramp_to_value_at_time(200.0, now + dur)
+                    .ok();
             }
             _ => {
                 // Neutral/light (for 5th tone)

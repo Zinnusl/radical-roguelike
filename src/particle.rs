@@ -7,8 +7,8 @@ pub struct Particle {
     pub y: f64,
     pub vx: f64,
     pub vy: f64,
-    pub life: f64,    // 0.0 .. 1.0 (1.0 = just spawned)
-    pub decay: f64,   // life lost per tick (higher = shorter-lived)
+    pub life: f64,  // 0.0 .. 1.0 (1.0 = just spawned)
+    pub decay: f64, // life lost per tick (higher = shorter-lived)
     pub size: f64,
     pub r: u8,
     pub g: u8,
@@ -48,7 +48,17 @@ impl ParticleSystem {
     }
 
     /// Burst of particles at a screen position.
-    fn burst(&mut self, x: f64, y: f64, count: usize, r: u8, g: u8, b: u8, speed: f64, rng: &mut u64) {
+    fn burst(
+        &mut self,
+        x: f64,
+        y: f64,
+        count: usize,
+        r: u8,
+        g: u8,
+        b: u8,
+        speed: f64,
+        rng: &mut u64,
+    ) {
         for _ in 0..count {
             let angle = rng_f64(rng) * std::f64::consts::TAU;
             let spd = speed * (0.5 + rng_f64(rng) * 0.5);
@@ -146,6 +156,33 @@ impl ParticleSystem {
     pub fn spawn_bridge(&mut self, x: f64, y: f64, rng: &mut u64) {
         self.burst(x, y, 14, 120, 180, 255, 2.2, rng);
         self.burst(x, y, 10, 156, 102, 58, 1.9, rng);
+    }
+
+    pub fn spawn_streak(&mut self, x: f64, y: f64, rng: &mut u64) {
+        for _ in 0..18 {
+            self.particles.push(Particle {
+                x: x + (rng_f64(rng) - 0.5) * 16.0,
+                y,
+                vx: (rng_f64(rng) - 0.5) * 1.2,
+                vy: -(2.5 + rng_f64(rng) * 2.5),
+                life: 1.0,
+                decay: 0.015 + rng_f64(rng) * 0.02,
+                size: 2.0 + rng_f64(rng) * 2.5,
+                r: 255,
+                g: (100.0 + rng_f64(rng) * 80.0) as u8,
+                b: 20,
+            });
+        }
+    }
+
+    pub fn spawn_synergy(&mut self, x: f64, y: f64, rng: &mut u64) {
+        self.burst(x, y, 14, 255, 215, 0, 2.0, rng);
+        self.burst(x, y, 8, 255, 240, 100, 1.2, rng);
+    }
+
+    pub fn spawn_altar(&mut self, x: f64, y: f64, rng: &mut u64) {
+        self.burst(x, y, 22, 200, 160, 255, 3.0, rng);
+        self.burst(x, y, 12, 255, 200, 255, 2.0, rng);
     }
 }
 

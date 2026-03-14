@@ -1,0 +1,341 @@
+use std::collections::HashMap;
+
+use web_sys::HtmlImageElement;
+
+pub struct SpriteCache {
+    sprites: HashMap<&'static str, HtmlImageElement>,
+}
+
+impl SpriteCache {
+    pub fn new() -> Self {
+        let mut sprites = HashMap::new();
+
+        fn register(
+            sprites: &mut HashMap<&'static str, HtmlImageElement>,
+            key: &'static str,
+            path: &'static str,
+        ) {
+            if let Ok(img) = HtmlImageElement::new() {
+                img.set_src(path);
+                sprites.insert(key, img);
+            }
+        }
+
+        register(&mut sprites, "tile_wall", "assets/sprites/tiles/wall.png");
+        register(
+            &mut sprites,
+            "tile_cracked_wall",
+            "assets/sprites/tiles/cracked_wall.png",
+        );
+        register(
+            &mut sprites,
+            "tile_brittle_wall",
+            "assets/sprites/tiles/brittle_wall.png",
+        );
+        register(&mut sprites, "tile_floor", "assets/sprites/tiles/floor.png");
+        register(
+            &mut sprites,
+            "tile_corridor",
+            "assets/sprites/tiles/corridor.png",
+        );
+        register(
+            &mut sprites,
+            "tile_stairs_down",
+            "assets/sprites/tiles/stairs_down.png",
+        );
+        register(&mut sprites, "tile_forge", "assets/sprites/tiles/forge.png");
+        register(&mut sprites, "tile_shop", "assets/sprites/tiles/shop.png");
+        register(&mut sprites, "tile_chest", "assets/sprites/tiles/chest.png");
+        register(&mut sprites, "tile_crate", "assets/sprites/tiles/crate.png");
+        register(
+            &mut sprites,
+            "tile_spikes",
+            "assets/sprites/tiles/spikes.png",
+        );
+        register(&mut sprites, "tile_oil", "assets/sprites/tiles/oil.png");
+        register(&mut sprites, "tile_water", "assets/sprites/tiles/water.png");
+        register(
+            &mut sprites,
+            "tile_deep_water",
+            "assets/sprites/tiles/deep_water.png",
+        );
+        register(
+            &mut sprites,
+            "tile_bridge",
+            "assets/sprites/tiles/bridge.png",
+        );
+
+        register(
+            &mut sprites,
+            "obj_shrine",
+            "assets/sprites/objects/shrine.png",
+        );
+        register(
+            &mut sprites,
+            "obj_altar_jade",
+            "assets/sprites/objects/altar_jade.png",
+        );
+        register(
+            &mut sprites,
+            "obj_altar_gale",
+            "assets/sprites/objects/altar_gale.png",
+        );
+        register(
+            &mut sprites,
+            "obj_altar_mirror",
+            "assets/sprites/objects/altar_mirror.png",
+        );
+        register(
+            &mut sprites,
+            "obj_altar_iron",
+            "assets/sprites/objects/altar_iron.png",
+        );
+        register(
+            &mut sprites,
+            "obj_altar_gold",
+            "assets/sprites/objects/altar_gold.png",
+        );
+        register(
+            &mut sprites,
+            "obj_seal_ember",
+            "assets/sprites/objects/seal_ember.png",
+        );
+        register(
+            &mut sprites,
+            "obj_seal_tide",
+            "assets/sprites/objects/seal_tide.png",
+        );
+        register(
+            &mut sprites,
+            "obj_seal_thorn",
+            "assets/sprites/objects/seal_thorn.png",
+        );
+        register(
+            &mut sprites,
+            "obj_seal_echo",
+            "assets/sprites/objects/seal_echo.png",
+        );
+        register(&mut sprites, "obj_sign", "assets/sprites/objects/sign.png");
+
+        register(
+            &mut sprites,
+            "player_human",
+            "assets/sprites/player/human.png",
+        );
+        register(
+            &mut sprites,
+            "player_flame",
+            "assets/sprites/player/flame.png",
+        );
+        register(
+            &mut sprites,
+            "player_stone",
+            "assets/sprites/player/stone.png",
+        );
+        register(
+            &mut sprites,
+            "player_mist",
+            "assets/sprites/player/mist.png",
+        );
+        register(
+            &mut sprites,
+            "player_tiger",
+            "assets/sprites/player/tiger.png",
+        );
+
+        register(
+            &mut sprites,
+            "npc_teacher",
+            "assets/sprites/npcs/teacher.png",
+        );
+        register(&mut sprites, "npc_monk", "assets/sprites/npcs/monk.png");
+        register(
+            &mut sprites,
+            "npc_merchant",
+            "assets/sprites/npcs/merchant.png",
+        );
+        register(&mut sprites, "npc_guard", "assets/sprites/npcs/guard.png");
+
+        register(
+            &mut sprites,
+            "boss_gatekeeper",
+            "assets/sprites/bosses/gatekeeper.png",
+        );
+        register(
+            &mut sprites,
+            "boss_scholar",
+            "assets/sprites/bosses/scholar.png",
+        );
+        register(
+            &mut sprites,
+            "boss_elementalist",
+            "assets/sprites/bosses/elementalist.png",
+        );
+        register(
+            &mut sprites,
+            "boss_mimic_king",
+            "assets/sprites/bosses/mimic_king.png",
+        );
+        register(
+            &mut sprites,
+            "boss_ink_sage",
+            "assets/sprites/bosses/ink_sage.png",
+        );
+        register(
+            &mut sprites,
+            "boss_radical_thief",
+            "assets/sprites/bosses/radical_thief.png",
+        );
+
+        register(
+            &mut sprites,
+            "enemy_generic",
+            "assets/sprites/enemies/generic.png",
+        );
+        register(
+            &mut sprites,
+            "enemy_elite",
+            "assets/sprites/enemies/elite.png",
+        );
+
+        register(
+            &mut sprites,
+            "item_health_potion",
+            "assets/sprites/items/health_potion.png",
+        );
+        register(
+            &mut sprites,
+            "item_poison_flask",
+            "assets/sprites/items/poison_flask.png",
+        );
+        register(
+            &mut sprites,
+            "item_reveal_scroll",
+            "assets/sprites/items/reveal_scroll.png",
+        );
+        register(
+            &mut sprites,
+            "item_teleport_scroll",
+            "assets/sprites/items/teleport_scroll.png",
+        );
+        register(
+            &mut sprites,
+            "item_haste_potion",
+            "assets/sprites/items/haste_potion.png",
+        );
+        register(
+            &mut sprites,
+            "item_stun_bomb",
+            "assets/sprites/items/stun_bomb.png",
+        );
+
+        register(
+            &mut sprites,
+            "equip_brush_of_clarity",
+            "assets/sprites/equipment/brush_of_clarity.png",
+        );
+        register(
+            &mut sprites,
+            "equip_scholars_quill",
+            "assets/sprites/equipment/scholars_quill.png",
+        );
+        register(
+            &mut sprites,
+            "equip_dragon_fang_pen",
+            "assets/sprites/equipment/dragon_fang_pen.png",
+        );
+        register(
+            &mut sprites,
+            "equip_iron_pickaxe",
+            "assets/sprites/equipment/iron_pickaxe.png",
+        );
+        register(
+            &mut sprites,
+            "equip_jade_vest",
+            "assets/sprites/equipment/jade_vest.png",
+        );
+        register(
+            &mut sprites,
+            "equip_iron_silk_robe",
+            "assets/sprites/equipment/iron_silk_robe.png",
+        );
+        register(
+            &mut sprites,
+            "equip_phoenix_mantle",
+            "assets/sprites/equipment/phoenix_mantle.png",
+        );
+        register(
+            &mut sprites,
+            "equip_radical_magnet",
+            "assets/sprites/equipment/radical_magnet.png",
+        );
+        register(
+            &mut sprites,
+            "equip_life_jade",
+            "assets/sprites/equipment/life_jade.png",
+        );
+        register(
+            &mut sprites,
+            "equip_gold_toad",
+            "assets/sprites/equipment/gold_toad.png",
+        );
+        register(
+            &mut sprites,
+            "equip_phoenix_feather",
+            "assets/sprites/equipment/phoenix_feather.png",
+        );
+
+        register(
+            &mut sprites,
+            "spell_fire",
+            "assets/sprites/ui/spell_fire.png",
+        );
+        register(
+            &mut sprites,
+            "spell_heal",
+            "assets/sprites/ui/spell_heal.png",
+        );
+        register(
+            &mut sprites,
+            "spell_reveal",
+            "assets/sprites/ui/spell_reveal.png",
+        );
+        register(
+            &mut sprites,
+            "spell_shield",
+            "assets/sprites/ui/spell_shield.png",
+        );
+        register(
+            &mut sprites,
+            "spell_strike",
+            "assets/sprites/ui/spell_strike.png",
+        );
+        register(
+            &mut sprites,
+            "spell_drain",
+            "assets/sprites/ui/spell_drain.png",
+        );
+        register(
+            &mut sprites,
+            "spell_stun",
+            "assets/sprites/ui/spell_stun.png",
+        );
+        register(
+            &mut sprites,
+            "spell_pacify",
+            "assets/sprites/ui/spell_pacify.png",
+        );
+
+        Self { sprites }
+    }
+
+    pub fn get(&self, key: &str) -> Option<&HtmlImageElement> {
+        self.sprites.get(key)
+    }
+
+    pub fn is_loaded(&self, key: &str) -> bool {
+        self.get(key)
+            .map(|img| img.complete() && img.natural_width() > 0)
+            .unwrap_or(false)
+    }
+}

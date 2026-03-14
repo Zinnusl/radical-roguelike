@@ -35,7 +35,13 @@ impl Codex {
     }
 
     /// Record an encounter with a character.
-    pub fn record(&mut self, hanzi: &'static str, pinyin: &'static str, meaning: &'static str, correct: bool) {
+    pub fn record(
+        &mut self,
+        hanzi: &'static str,
+        pinyin: &'static str,
+        meaning: &'static str,
+        correct: bool,
+    ) {
         let entry = self.entries.entry(hanzi).or_insert(CodexEntry {
             hanzi,
             pinyin,
@@ -63,13 +69,20 @@ impl Codex {
 
     /// Save to localStorage.
     pub fn save(&self) {
-        let storage = web_sys::window()
-            .and_then(|w| w.local_storage().ok().flatten());
+        let storage = web_sys::window().and_then(|w| w.local_storage().ok().flatten());
         if let Some(storage) = storage {
             // Format: hanzi|pinyin|meaning|seen|correct;hanzi2|...
-            let data: String = self.entries.values().map(|e| {
-                format!("{}|{}|{}|{}|{}", e.hanzi, e.pinyin, e.meaning, e.times_seen, e.times_correct)
-            }).collect::<Vec<_>>().join(";");
+            let data: String = self
+                .entries
+                .values()
+                .map(|e| {
+                    format!(
+                        "{}|{}|{}|{}|{}",
+                        e.hanzi, e.pinyin, e.meaning, e.times_seen, e.times_correct
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(";");
             let _ = storage.set_item("radical_roguelike_codex", &data);
         }
     }
@@ -77,8 +90,7 @@ impl Codex {
     /// Load from localStorage.
     pub fn load(vocab_pool: &[crate::vocab::VocabEntry]) -> Self {
         let mut codex = Self::new();
-        let storage = web_sys::window()
-            .and_then(|w| w.local_storage().ok().flatten());
+        let storage = web_sys::window().and_then(|w| w.local_storage().ok().flatten());
         if let Some(storage) = storage {
             if let Ok(Some(data)) = storage.get_item("radical_roguelike_codex") {
                 for entry_str in data.split(';') {

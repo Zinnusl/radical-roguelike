@@ -4,10 +4,20 @@ use crate::status::StatusInstance;
 use crate::vocab::VocabEntry;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AiBehavior {
+    Chase,
+    Retreat,
+    Ambush,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BossKind {
     Gatekeeper,
     Scholar,
     Elementalist,
+    MimicKing,
+    InkSage,
+    RadicalThief,
 }
 
 impl BossKind {
@@ -16,6 +26,9 @@ impl BossKind {
             5 => Some(Self::Gatekeeper),
             10 => Some(Self::Scholar),
             15 => Some(Self::Elementalist),
+            20 => Some(Self::MimicKing),
+            25 => Some(Self::InkSage),
+            30 => Some(Self::RadicalThief),
             _ => None,
         }
     }
@@ -25,6 +38,9 @@ impl BossKind {
             Self::Gatekeeper => "Gatekeeper",
             Self::Scholar => "Scholar",
             Self::Elementalist => "Elementalist",
+            Self::MimicKing => "Mimic King",
+            Self::InkSage => "Ink Sage",
+            Self::RadicalThief => "Radical Thief",
         }
     }
 }
@@ -86,17 +102,37 @@ pub struct Enemy {
     pub elite_chain: usize,
     /// Defensive components (shields) that must be broken first
     pub components: Vec<&'static str>,
+    pub ai: AiBehavior,
 }
 
 impl Enemy {
     pub fn from_vocab(entry: &'static VocabEntry, x: i32, y: i32, floor: i32) -> Self {
         let is_elite = crate::vocab::is_elite(entry);
         let hp = if is_elite { 4 + floor } else { 2 + floor / 2 };
-        let damage = if is_elite { 2 + floor / 2 } else { 1 + floor / 3 };
-        let gold = if is_elite { 15 + floor * 3 } else { 5 + floor * 2 };
-        
+        let damage = if is_elite {
+            2 + floor / 2
+        } else {
+            1 + floor / 3
+        };
+        let gold = if is_elite {
+            15 + floor * 3
+        } else {
+            5 + floor * 2
+        };
+
         let components = get_components(entry.hanzi);
-        
+
+        let ai = if is_elite {
+            AiBehavior::Chase
+        } else {
+            let seed = (x.wrapping_mul(31) ^ y.wrapping_mul(17) ^ floor.wrapping_mul(7)) as u32;
+            match seed % 10 {
+                0..=5 => AiBehavior::Chase,
+                6..=7 => AiBehavior::Ambush,
+                _ => AiBehavior::Retreat,
+            }
+        };
+
         Self {
             x,
             y,
@@ -118,6 +154,7 @@ impl Enemy {
             resisted_spell: None,
             elite_chain: 0,
             components,
+            ai,
         }
     }
 
@@ -127,6 +164,9 @@ impl Enemy {
             Some(BossKind::Gatekeeper) => (16 + floor, 3 + floor / 3, 60 + floor * 5, 1),
             Some(BossKind::Scholar) => (14 + floor, 3 + floor / 3, 70 + floor * 5, 0),
             Some(BossKind::Elementalist) => (18 + floor, 4 + floor / 3, 80 + floor * 5, 0),
+            Some(BossKind::MimicKing) => (22 + floor, 4 + floor / 3, 90 + floor * 5, 2),
+            Some(BossKind::InkSage) => (20 + floor, 5 + floor / 3, 100 + floor * 5, 0),
+            Some(BossKind::RadicalThief) => (24 + floor, 5 + floor / 3, 120 + floor * 5, 0),
             None => (8 + floor, 2 + floor / 2, 30 + floor * 5, 0),
         };
         Self {
@@ -149,7 +189,8 @@ impl Enemy {
             summon_cooldown: cooldown,
             resisted_spell: None,
             elite_chain: 0,
-            components: Vec::new(), // Bosses don't use standard components yet
+            components: Vec::new(),
+            ai: AiBehavior::Chase,
         }
     }
 
@@ -176,6 +217,43 @@ impl Enemy {
         }
     }
 
+    pub fn step_retreat(&self, tx: i32, ty: i32) -> (i32, i32) {
+        let dx = (self.x - tx).signum();
+        let dy = (self.y - ty).signum();
+        if (tx - self.x).abs() >= (ty - self.y).abs() {
+            if dx != 0 {
+                return (self.x + dx, self.y);
+            }
+            (self.x, self.y + dy)
+        } else {
+            if dy != 0 {
+                return (self.x, self.y + dy);
+            }
+            (self.x + dx, self.y)
+        }
+    }
+
+    pub fn ai_step(&self, tx: i32, ty: i32) -> (i32, i32) {
+        let dist = (tx - self.x).abs() + (ty - self.y).abs();
+        match self.ai {
+            AiBehavior::Chase => self.step_toward(tx, ty),
+            AiBehavior::Retreat => {
+                if dist <= 2 {
+                    self.step_toward(tx, ty)
+                } else {
+                    self.step_retreat(tx, ty)
+                }
+            }
+            AiBehavior::Ambush => {
+                if dist <= 3 {
+                    self.step_toward(tx, ty)
+                } else {
+                    (self.x, self.y)
+                }
+            }
+        }
+    }
+
     pub fn boss_trait_text(&self) -> Option<String> {
         match self.boss_kind {
             Some(BossKind::Gatekeeper) => Some("Summons 门 wards when cornered".to_string()),
@@ -188,6 +266,15 @@ impl Enemy {
                 Some(school) => format!("Resists last spell: {}", school),
                 None => "Adapts to the last spell you cast".to_string(),
             }),
+            Some(BossKind::MimicKing) => Some("Disguises allies — answer carefully!".to_string()),
+            Some(BossKind::InkSage) => Some(if self.phase_triggered {
+                "Calligraphy trial spent".to_string()
+            } else {
+                "Triggers a calligraphy trial at half HP".to_string()
+            }),
+            Some(BossKind::RadicalThief) => {
+                Some("Steals a radical on each wrong answer".to_string())
+            }
             None => None,
         }
     }
@@ -208,7 +295,7 @@ impl Enemy {
 
 #[cfg(test)]
 mod tests {
-    use super::{BossKind, Enemy};
+    use super::{AiBehavior, BossKind, Enemy};
     use crate::vocab::VOCAB;
 
     fn friend_entry() -> &'static crate::vocab::VocabEntry {
@@ -220,7 +307,10 @@ mod tests {
         assert_eq!(BossKind::for_floor(5), Some(BossKind::Gatekeeper));
         assert_eq!(BossKind::for_floor(10), Some(BossKind::Scholar));
         assert_eq!(BossKind::for_floor(15), Some(BossKind::Elementalist));
-        assert_eq!(BossKind::for_floor(20), None);
+        assert_eq!(BossKind::for_floor(20), Some(BossKind::MimicKing));
+        assert_eq!(BossKind::for_floor(25), Some(BossKind::InkSage));
+        assert_eq!(BossKind::for_floor(30), Some(BossKind::RadicalThief));
+        assert_eq!(BossKind::for_floor(35), None);
     }
 
     #[test]
@@ -229,5 +319,19 @@ mod tests {
         enemy.elite_chain = 1;
 
         assert_eq!(enemy.elite_expected_syllable(), Some("you3"));
+    }
+
+    #[test]
+    fn ai_behavior_dispatch_covers_all_variants() {
+        let mut enemy = Enemy::from_vocab(friend_entry(), 5, 5, 1);
+
+        enemy.ai = AiBehavior::Chase;
+        let _ = enemy.ai_step(10, 10);
+
+        enemy.ai = AiBehavior::Retreat;
+        let _ = enemy.ai_step(10, 10);
+
+        enemy.ai = AiBehavior::Ambush;
+        let _ = enemy.ai_step(10, 10);
     }
 }

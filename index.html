@@ -6,6 +6,7 @@
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#ffcc33" />
   <title>Radical Dungeon</title>
+  <link data-trunk rel="copy-dir" href="assets" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -43,7 +44,7 @@
 <body>
   <h1>⚗️ Radical Dungeon</h1>
   <div id="loading">Loading WASM…</div>
-  <div class="controls">WASD/Arrows=move · Bump=fight · Type pinyin+Enter=attack · Tab/Space=spell · ⚒=forge · L=listen · C=codex</div>
+  <div class="controls">WASD/Arrows=move · Bump=fight · Type pinyin+Enter=attack · Q=cycle spell · Space=cast · ⚒=forge · L=listen · C=codex</div>
 
   <!-- Mobile touch controls -->
   <div id="touch-controls">
@@ -60,7 +61,7 @@
       <button class="action-btn" data-key="Enter">Enter</button>
       <button class="action-btn" data-key="Escape">Esc</button>
       <button class="action-btn" data-key=" ">Spell</button>
-      <button class="action-btn" data-key="Tab">Tab</button>
+      <button class="action-btn" data-key="q">Q</button>
     </div>
   </div>
 

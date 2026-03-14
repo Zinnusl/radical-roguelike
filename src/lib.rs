@@ -12,6 +12,7 @@ mod particle;
 mod player;
 mod radical;
 mod render;
+mod sprites;
 mod srs;
 mod status;
 mod vocab;

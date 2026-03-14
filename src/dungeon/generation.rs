@@ -313,7 +313,13 @@ impl BspNode {
             let h = rng.range(MIN_ROOM, self.h - 1);
             let x = self.x + rng.range(1, self.w - w);
             let y = self.y + rng.range(1, self.h - h);
-            self.room = Some(Room { x, y, w, h, modifier: None });
+            self.room = Some(Room {
+                x,
+                y,
+                w,
+                h,
+                modifier: None,
+            });
         }
     }
 
@@ -402,7 +408,14 @@ impl DungeonLevel {
         }
     }
 
-    fn place_secret_room_feature(&mut self, room_x: i32, room_y: i32, room_w: i32, room_h: i32, rng: &mut Rng) {
+    fn place_secret_room_feature(
+        &mut self,
+        room_x: i32,
+        room_y: i32,
+        room_w: i32,
+        room_h: i32,
+        rng: &mut Rng,
+    ) {
         let cx = room_x + room_w / 2;
         let cy = room_y + room_h / 2;
 
@@ -831,12 +844,86 @@ impl DungeonLevel {
         false
     }
 
+    /// Spike bridge: 3-wide spike corridor with a chest on the far side.
+    fn try_place_spike_bridge(&mut self, room: &Room, rng: &mut Rng) -> bool {
+        if room.w < 7 || room.h < 5 {
+            return false;
+        }
+        let cy = rng.range(room.y + 1, room.y + room.h - 1);
+        let sx = room.x + 2;
+        for dx in 0..3 {
+            let x = sx + dx;
+            if !self.in_bounds(x, cy) || self.tile(x, cy) != Tile::Floor {
+                return false;
+            }
+        }
+        let reward_x = sx + 3;
+        if !self.in_bounds(reward_x, cy) || self.tile(reward_x, cy) != Tile::Floor {
+            return false;
+        }
+        for dx in 0..3 {
+            let idx = self.idx(sx + dx, cy);
+            self.tiles[idx] = Tile::Spikes;
+        }
+        let idx = self.idx(reward_x, cy);
+        self.tiles[idx] = Tile::Chest;
+        true
+    }
+
+    /// Oil-fire trap: oil slick leading to a chest, ignitable by fire spell.
+    fn try_place_oil_fire_trap(&mut self, room: &Room, rng: &mut Rng) -> bool {
+        if room.w < 6 || room.h < 5 {
+            return false;
+        }
+        let cy = rng.range(room.y + 1, room.y + room.h - 1);
+        let sx = room.x + 2;
+        for dx in 0..3 {
+            let x = sx + dx;
+            if !self.in_bounds(x, cy) || self.tile(x, cy) != Tile::Floor {
+                return false;
+            }
+        }
+        for dx in 0..2 {
+            let idx = self.idx(sx + dx, cy);
+            self.tiles[idx] = Tile::Oil;
+        }
+        let idx = self.idx(sx + 2, cy);
+        self.tiles[idx] = Tile::Chest;
+        true
+    }
+
+    /// Seal chain: two seals placed near each other for cascading reshaping.
+    fn try_place_seal_chain(&mut self, room: &Room, rng: &mut Rng) -> bool {
+        if room.w < 6 || room.h < 5 {
+            return false;
+        }
+        let cx = rng.range(room.x + 1, room.x + room.w - 3);
+        let cy = rng.range(room.y + 1, room.y + room.h - 1);
+        if !self.in_bounds(cx, cy) || self.tile(cx, cy) != Tile::Floor {
+            return false;
+        }
+        if !self.in_bounds(cx + 2, cy) || self.tile(cx + 2, cy) != Tile::Floor {
+            return false;
+        }
+        let kind_a = SealKind::random(&mut Rng::new(rng.next_u64()));
+        let kind_b = SealKind::random(&mut Rng::new(rng.next_u64()));
+        let idx_a = self.idx(cx, cy);
+        self.tiles[idx_a] = Tile::Seal(kind_a);
+        let idx_b = self.idx(cx + 2, cy);
+        self.tiles[idx_b] = Tile::Seal(kind_b);
+        true
+    }
+
     fn place_puzzle_room_in_room(&mut self, room: &Room, rng: &mut Rng) -> bool {
-        let start = (rng.next_u64() % 2) as usize;
-        for offset in 0..2 {
-            let placed = match (start + offset) % 2 {
+        let variant_count = 5;
+        let start = (rng.next_u64() % variant_count) as usize;
+        for offset in 0..variant_count as usize {
+            let placed = match (start + offset) % variant_count as usize {
                 0 => self.try_place_brittle_vault(room, rng),
-                _ => self.try_place_deep_water_cache(room, rng),
+                1 => self.try_place_deep_water_cache(room, rng),
+                2 => self.try_place_spike_bridge(room, rng),
+                3 => self.try_place_oil_fire_trap(room, rng),
+                _ => self.try_place_seal_chain(room, rng),
             };
             if placed {
                 return true;
@@ -856,7 +943,11 @@ impl DungeonLevel {
             return;
         }
 
-        let desired = if room_count >= 4 && rng.next_u64() % 100 < 50 { 2 } else { 1 };
+        let desired = if room_count >= 4 && rng.next_u64() % 100 < 50 {
+            2
+        } else {
+            1
+        };
         let start = (rng.next_u64() as usize) % room_count;
         let mut placed = 0;
         for offset in 0..room_count {
@@ -897,7 +988,9 @@ impl DungeonLevel {
             let pick = rng.range(0, candidates.len() as i32) as usize;
             if used.contains(&pick) {
                 // Avoid infinite loop if few candidates
-                if used.len() >= candidates.len() { break; }
+                if used.len() >= candidates.len() {
+                    break;
+                }
                 continue;
             }
             used.push(pick);
@@ -956,7 +1049,9 @@ impl DungeonLevel {
                     }
                 })
             });
-            if has_special { continue; }
+            if has_special {
+                continue;
+            }
 
             let chest_count = rng.range(2, 4); // 2-3 chests
             let mut placed = 0;
@@ -968,11 +1063,15 @@ impl DungeonLevel {
                     if self.tiles[idx] == Tile::Floor {
                         self.tiles[idx] = Tile::Chest;
                         placed += 1;
-                        if placed >= chest_count { break; }
+                        if placed >= chest_count {
+                            break;
+                        }
                     }
                 }
             }
-            if placed > 0 { return; }
+            if placed > 0 {
+                return;
+            }
         }
     }
 
@@ -1111,15 +1210,15 @@ impl DungeonLevel {
 
     /// Get player start position (center of first room).
     pub fn start_pos(&self) -> (i32, i32) {
-        self.rooms
-            .first()
-            .map(|r| r.center())
-            .unwrap_or((1, 1))
+        self.rooms.first().map(|r| r.center()).unwrap_or((1, 1))
     }
 
     /// Scripted tutorial floor used on the first run.
     pub fn tutorial(width: i32, height: i32) -> Self {
-        debug_assert!(width >= 44 && height >= 30, "tutorial floor expects the default map size");
+        debug_assert!(
+            width >= 44 && height >= 30,
+            "tutorial floor expects the default map size"
+        );
 
         let size = (width * height) as usize;
         let mut level = DungeonLevel {
@@ -1127,9 +1226,27 @@ impl DungeonLevel {
             height,
             tiles: vec![Tile::Wall; size],
             rooms: vec![
-                Room { x: 4, y: 18, w: 9, h: 9, modifier: None },
-                Room { x: 16, y: 18, w: 9, h: 9, modifier: None },
-                Room { x: 29, y: 18, w: 13, h: 9, modifier: None },
+                Room {
+                    x: 4,
+                    y: 18,
+                    w: 9,
+                    h: 9,
+                    modifier: None,
+                },
+                Room {
+                    x: 16,
+                    y: 18,
+                    w: 9,
+                    h: 9,
+                    modifier: None,
+                },
+                Room {
+                    x: 29,
+                    y: 18,
+                    w: 13,
+                    h: 9,
+                    modifier: None,
+                },
             ],
             visible: vec![false; size],
             revealed: vec![false; size],
@@ -1291,7 +1408,9 @@ impl DungeonLevel {
     /// Assign random modifiers to some rooms (not first or last).
     fn assign_room_modifiers(&mut self, rng: &mut Rng) {
         let n = self.rooms.len();
-        if n <= 2 { return; }
+        if n <= 2 {
+            return;
+        }
         for i in 1..n - 1 {
             if rng.next_u64() % 100 < 30 {
                 self.rooms[i].modifier = Some(match rng.next_u64() % 3 {
@@ -1306,8 +1425,12 @@ impl DungeonLevel {
     /// Place a companion NPC in a random middle room (~40% chance per floor).
     fn place_npcs(&mut self, rng: &mut Rng) {
         let n = self.rooms.len();
-        if n <= 3 { return; }
-        if rng.next_u64() % 100 >= 40 { return; }
+        if n <= 3 {
+            return;
+        }
+        if rng.next_u64() % 100 >= 40 {
+            return;
+        }
         // Pick a random middle room (not first, last, or second-to-last)
         let room_idx = 1 + (rng.next_u64() as usize % (n - 3));
         let room = &self.rooms[room_idx];
@@ -1323,8 +1446,12 @@ impl DungeonLevel {
     /// Place a tone shrine in a random middle room (~30% chance).
     fn place_shrines(&mut self, rng: &mut Rng) {
         let n = self.rooms.len();
-        if n <= 3 { return; }
-        if rng.next_u64() % 100 >= 30 { return; }
+        if n <= 3 {
+            return;
+        }
+        if rng.next_u64() % 100 >= 30 {
+            return;
+        }
         let room_idx = 1 + (rng.next_u64() as usize % (n - 2));
         let room = &self.rooms[room_idx];
         let cx = room.x + room.w / 2 - 1;
@@ -1447,10 +1574,9 @@ impl DungeonLevel {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::{AltarKind, DungeonLevel, Room, Rng, SealKind, Tile};
+    use super::{AltarKind, DungeonLevel, Rng, Room, SealKind, Tile};
 
     fn make_clean_test_level() -> DungeonLevel {
         let width = 24;
@@ -1460,11 +1586,41 @@ mod tests {
             height,
             tiles: vec![Tile::Wall; (width * height) as usize],
             rooms: vec![
-                Room { x: 1, y: 1, w: 5, h: 5, modifier: None },
-                Room { x: 8, y: 1, w: 5, h: 5, modifier: None },
-                Room { x: 15, y: 1, w: 5, h: 5, modifier: None },
-                Room { x: 1, y: 10, w: 5, h: 5, modifier: None },
-                Room { x: 8, y: 10, w: 5, h: 5, modifier: None },
+                Room {
+                    x: 1,
+                    y: 1,
+                    w: 5,
+                    h: 5,
+                    modifier: None,
+                },
+                Room {
+                    x: 8,
+                    y: 1,
+                    w: 5,
+                    h: 5,
+                    modifier: None,
+                },
+                Room {
+                    x: 15,
+                    y: 1,
+                    w: 5,
+                    h: 5,
+                    modifier: None,
+                },
+                Room {
+                    x: 1,
+                    y: 10,
+                    w: 5,
+                    h: 5,
+                    modifier: None,
+                },
+                Room {
+                    x: 8,
+                    y: 10,
+                    w: 5,
+                    h: 5,
+                    modifier: None,
+                },
             ],
             visible: vec![false; (width * height) as usize],
             revealed: vec![false; (width * height) as usize],
@@ -1488,11 +1644,41 @@ mod tests {
             height,
             tiles: vec![Tile::Wall; (width * height) as usize],
             rooms: vec![
-                Room { x: 1, y: 1, w: 8, h: 8, modifier: None },
-                Room { x: 11, y: 1, w: 8, h: 8, modifier: None },
-                Room { x: 21, y: 1, w: 8, h: 8, modifier: None },
-                Room { x: 1, y: 12, w: 8, h: 8, modifier: None },
-                Room { x: 11, y: 12, w: 8, h: 8, modifier: None },
+                Room {
+                    x: 1,
+                    y: 1,
+                    w: 8,
+                    h: 8,
+                    modifier: None,
+                },
+                Room {
+                    x: 11,
+                    y: 1,
+                    w: 8,
+                    h: 8,
+                    modifier: None,
+                },
+                Room {
+                    x: 21,
+                    y: 1,
+                    w: 8,
+                    h: 8,
+                    modifier: None,
+                },
+                Room {
+                    x: 1,
+                    y: 12,
+                    w: 8,
+                    h: 8,
+                    modifier: None,
+                },
+                Room {
+                    x: 11,
+                    y: 12,
+                    w: 8,
+                    h: 8,
+                    modifier: None,
+                },
             ],
             visible: vec![false; (width * height) as usize],
             revealed: vec![false; (width * height) as usize],
@@ -1618,6 +1804,56 @@ mod tests {
         false
     }
 
+    fn has_spike_bridge(level: &DungeonLevel) -> bool {
+        for y in 0..level.height {
+            for x in 0..level.width - 3 {
+                if level.tile(x, y) == Tile::Spikes
+                    && level.tile(x + 1, y) == Tile::Spikes
+                    && level.tile(x + 2, y) == Tile::Spikes
+                    && level.tile(x + 3, y) == Tile::Chest
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn has_oil_fire_trap(level: &DungeonLevel) -> bool {
+        for y in 0..level.height {
+            for x in 0..level.width - 2 {
+                if level.tile(x, y) == Tile::Oil
+                    && level.tile(x + 1, y) == Tile::Oil
+                    && level.tile(x + 2, y) == Tile::Chest
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn has_seal_chain(level: &DungeonLevel) -> bool {
+        for y in 0..level.height {
+            for x in 0..level.width - 2 {
+                if matches!(level.tile(x, y), Tile::Seal(_))
+                    && matches!(level.tile(x + 2, y), Tile::Seal(_))
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn has_any_puzzle_room(level: &DungeonLevel) -> bool {
+        has_brittle_vault(level)
+            || has_deep_water_cache(level)
+            || has_spike_bridge(level)
+            || has_oil_fire_trap(level)
+            || has_seal_chain(level)
+    }
+
     #[test]
     fn hazards_and_altars_are_walkable_but_crates_block() {
         assert!(Tile::Spikes.is_walkable());
@@ -1638,7 +1874,10 @@ mod tests {
 
         level.place_altars(&mut rng);
 
-        assert!(level.tiles.iter().any(|tile| matches!(tile, Tile::Altar(_))));
+        assert!(level
+            .tiles
+            .iter()
+            .any(|tile| matches!(tile, Tile::Altar(_))));
     }
 
     #[test]
@@ -1655,12 +1894,23 @@ mod tests {
     fn place_secret_room_carves_hidden_chamber_with_cracked_entrance() {
         let mut level = make_clean_test_level();
         let mut rng = Rng::new(11);
-        let original_open_tiles = level.tiles.iter().filter(|tile| !matches!(tile, Tile::Wall)).count();
+        let original_open_tiles = level
+            .tiles
+            .iter()
+            .filter(|tile| !matches!(tile, Tile::Wall))
+            .count();
 
         level.place_secret_room(&mut rng);
 
-        let new_open_tiles = level.tiles.iter().filter(|tile| !matches!(tile, Tile::Wall)).count();
-        assert!(level.tiles.iter().any(|tile| matches!(tile, Tile::CrackedWall)));
+        let new_open_tiles = level
+            .tiles
+            .iter()
+            .filter(|tile| !matches!(tile, Tile::Wall))
+            .count();
+        assert!(level
+            .tiles
+            .iter()
+            .any(|tile| matches!(tile, Tile::CrackedWall)));
         assert!(new_open_tiles > original_open_tiles);
     }
 
@@ -1672,7 +1922,10 @@ mod tests {
         level.place_secret_room(&mut rng);
 
         assert!(level.tiles.iter().any(|tile| {
-            matches!(tile, Tile::Chest | Tile::Forge | Tile::Shrine | Tile::Altar(_))
+            matches!(
+                tile,
+                Tile::Chest | Tile::Forge | Tile::Shrine | Tile::Altar(_)
+            )
         }));
     }
 
@@ -1681,7 +1934,11 @@ mod tests {
         let mut secret_count = 0;
         for seed in 1..=24 {
             let level = DungeonLevel::generate(48, 48, seed);
-            if level.tiles.iter().any(|tile| matches!(tile, Tile::CrackedWall)) {
+            if level
+                .tiles
+                .iter()
+                .any(|tile| matches!(tile, Tile::CrackedWall))
+            {
                 secret_count += 1;
             }
         }
@@ -1715,7 +1972,7 @@ mod tests {
 
         level.place_puzzle_rooms(&mut rng);
 
-        assert!(has_brittle_vault(&level) || has_deep_water_cache(&level));
+        assert!(has_any_puzzle_room(&level));
     }
 
     #[test]
@@ -1723,18 +1980,28 @@ mod tests {
         let mut puzzle_count = 0;
         let mut brittle_count = 0;
         let mut deep_water_count = 0;
+        let mut spike_count = 0;
+        let mut oil_count = 0;
+        let mut seal_count = 0;
         for seed in 1..=24 {
             let level = DungeonLevel::generate(48, 48, seed);
-            let has_brittle = has_brittle_vault(&level);
-            let has_deep = has_deep_water_cache(&level);
-            if has_brittle || has_deep {
+            if has_any_puzzle_room(&level) {
                 puzzle_count += 1;
             }
-            if has_brittle {
+            if has_brittle_vault(&level) {
                 brittle_count += 1;
             }
-            if has_deep {
+            if has_deep_water_cache(&level) {
                 deep_water_count += 1;
+            }
+            if has_spike_bridge(&level) {
+                spike_count += 1;
+            }
+            if has_oil_fire_trap(&level) {
+                oil_count += 1;
+            }
+            if has_seal_chain(&level) {
+                seal_count += 1;
             }
         }
 
@@ -1742,8 +2009,18 @@ mod tests {
             puzzle_count >= 16,
             "expected puzzle rooms on most sample floors, found {puzzle_count}"
         );
-        assert!(brittle_count > 0, "expected at least one brittle-wall vault in the sample set");
-        assert!(deep_water_count > 0, "expected at least one deep-water cache in the sample set");
+        let variant_types = [
+            brittle_count > 0,
+            deep_water_count > 0,
+            spike_count > 0,
+            oil_count > 0,
+            seal_count > 0,
+        ];
+        let variants_seen = variant_types.iter().filter(|&&v| v).count();
+        assert!(
+            variants_seen >= 2,
+            "expected at least 2 puzzle room variants across 24 seeds, saw {variants_seen}"
+        );
     }
 
     #[test]

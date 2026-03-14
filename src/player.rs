@@ -131,17 +131,61 @@ impl Item {
 }
 
 pub const EQUIPMENT_POOL: &[Equipment] = &[
-    Equipment { name: "Brush of Clarity", slot: EquipSlot::Weapon, effect: EquipEffect::BonusDamage(1) },
-    Equipment { name: "Scholar's Quill", slot: EquipSlot::Weapon, effect: EquipEffect::BonusDamage(2) },
-    Equipment { name: "Dragon Fang Pen", slot: EquipSlot::Weapon, effect: EquipEffect::BonusDamage(3) },
-    Equipment { name: "Jade Vest", slot: EquipSlot::Armor, effect: EquipEffect::DamageReduction(1) },
-    Equipment { name: "Iron Silk Robe", slot: EquipSlot::Armor, effect: EquipEffect::DamageReduction(2) },
-    Equipment { name: "Phoenix Mantle", slot: EquipSlot::Armor, effect: EquipEffect::DamageReduction(3) },
-    Equipment { name: "Radical Magnet", slot: EquipSlot::Charm, effect: EquipEffect::ExtraRadicalDrop(50) },
-    Equipment { name: "Life Jade", slot: EquipSlot::Charm, effect: EquipEffect::HealOnKill(2) },
-    Equipment { name: "Gold Toad", slot: EquipSlot::Charm, effect: EquipEffect::GoldBonus(10) },
-    Equipment { name: "Phoenix Feather", slot: EquipSlot::Charm, effect: EquipEffect::HealOnKill(3) },
-    Equipment { name: "Iron Pickaxe", slot: EquipSlot::Weapon, effect: EquipEffect::Digging },
+    Equipment {
+        name: "Brush of Clarity",
+        slot: EquipSlot::Weapon,
+        effect: EquipEffect::BonusDamage(1),
+    },
+    Equipment {
+        name: "Scholar's Quill",
+        slot: EquipSlot::Weapon,
+        effect: EquipEffect::BonusDamage(2),
+    },
+    Equipment {
+        name: "Dragon Fang Pen",
+        slot: EquipSlot::Weapon,
+        effect: EquipEffect::BonusDamage(3),
+    },
+    Equipment {
+        name: "Jade Vest",
+        slot: EquipSlot::Armor,
+        effect: EquipEffect::DamageReduction(1),
+    },
+    Equipment {
+        name: "Iron Silk Robe",
+        slot: EquipSlot::Armor,
+        effect: EquipEffect::DamageReduction(2),
+    },
+    Equipment {
+        name: "Phoenix Mantle",
+        slot: EquipSlot::Armor,
+        effect: EquipEffect::DamageReduction(3),
+    },
+    Equipment {
+        name: "Radical Magnet",
+        slot: EquipSlot::Charm,
+        effect: EquipEffect::ExtraRadicalDrop(50),
+    },
+    Equipment {
+        name: "Life Jade",
+        slot: EquipSlot::Charm,
+        effect: EquipEffect::HealOnKill(2),
+    },
+    Equipment {
+        name: "Gold Toad",
+        slot: EquipSlot::Charm,
+        effect: EquipEffect::GoldBonus(10),
+    },
+    Equipment {
+        name: "Phoenix Feather",
+        slot: EquipSlot::Charm,
+        effect: EquipEffect::HealOnKill(3),
+    },
+    Equipment {
+        name: "Iron Pickaxe",
+        slot: EquipSlot::Weapon,
+        effect: EquipEffect::Digging,
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -168,11 +212,11 @@ impl Deity {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayerForm {
     Human,
-    Flame,  // Immune to fire, burn on touch
+    Flame, // Immune to fire, burn on touch
     #[allow(dead_code)]
-    Stone,  // High Def, slow
-    Mist,   // High Evasion, weak atk
-    Tiger,  // High Atk, fast
+    Stone, // High Def, slow
+    Mist,  // High Evasion, weak atk
+    Tiger, // High Atk, fast
 }
 
 impl PlayerForm {
@@ -293,7 +337,11 @@ impl Player {
     }
 
     pub fn get_piety(&self, deity: Deity) -> i32 {
-        self.piety.iter().find(|(d, _)| *d == deity).map(|(_, p)| *p).unwrap_or(0)
+        self.piety
+            .iter()
+            .find(|(d, _)| *d == deity)
+            .map(|(_, p)| *p)
+            .unwrap_or(0)
     }
 
     pub fn add_piety(&mut self, deity: Deity, amount: i32) {
@@ -301,6 +349,58 @@ impl Player {
             *p += amount;
         } else {
             self.piety.push((deity, amount));
+        }
+    }
+
+    pub fn highest_deity(&self) -> Option<Deity> {
+        self.piety
+            .iter()
+            .filter(|&&(_, p)| p > 0)
+            .max_by_key(|&&(_, p)| p)
+            .map(|&(d, _)| d)
+    }
+
+    pub fn devotion_bonus(&self, deity: Deity) -> &'static str {
+        let p = self.get_piety(deity);
+        if p >= 15 {
+            match deity {
+                Deity::Jade => "Major: +1 HP on kill",
+                Deity::Iron => "Major: +1 bonus damage",
+                Deity::Gold => "Major: +3 bonus gold on kill",
+                Deity::Gale => "Major: 15% evade on wrong answer",
+                Deity::Mirror => "Major: Show pinyin on wrong answer",
+            }
+        } else if p >= 10 {
+            match deity {
+                Deity::Jade => "Moderate: +1 HP on kill",
+                Deity::Iron => "Moderate: +1 bonus damage",
+                Deity::Gold => "Moderate: +3 bonus gold on kill",
+                Deity::Gale => "Moderate: 15% evade on wrong answer",
+                Deity::Mirror => "Moderate: Show pinyin on wrong answer",
+            }
+        } else if p >= 5 {
+            "Minor devotion"
+        } else {
+            "None"
+        }
+    }
+
+    pub fn deity_synergy(&self) -> Option<(&'static str, &'static str)> {
+        let p = |d| self.get_piety(d) >= 10;
+        if p(Deity::Jade) && p(Deity::Iron) {
+            Some(("Paladin's Vigor", "Heal 1 HP per kill AND +1 damage"))
+        } else if p(Deity::Jade) && p(Deity::Gold) {
+            Some(("Merchant's Blessing", "+5 gold per floor cleared"))
+        } else if p(Deity::Mirror) && p(Deity::Gale) {
+            Some(("Scholar's Wind", "Reveal map on floor entry (25% chance)"))
+        } else if p(Deity::Iron) && p(Deity::Gold) {
+            Some(("Warlord's Tithe", "Enemies drop double gold"))
+        } else if p(Deity::Mirror) && p(Deity::Iron) {
+            Some(("Tactical Insight", "+2 bonus damage to elites"))
+        } else if p(Deity::Gale) && p(Deity::Gold) {
+            Some(("Fortune's Breeze", "25% chance for extra item on floor"))
+        } else {
+            None
         }
     }
 
@@ -462,49 +562,69 @@ impl Player {
 
     /// Bonus damage from enchantments (力=+1, 火=+1)
     pub fn enchant_bonus_damage(&self) -> i32 {
-        self.enchantments.iter().filter_map(|e| *e).map(|r| match r {
-            "力" | "火" => 1,
-            _ => 0,
-        }).sum()
+        self.enchantments
+            .iter()
+            .filter_map(|e| *e)
+            .map(|r| match r {
+                "力" | "火" => 1,
+                _ => 0,
+            })
+            .sum()
     }
 
     /// Bonus damage reduction from enchantments (水=+1, 土=+1)
     pub fn enchant_damage_reduction(&self) -> i32 {
-        self.enchantments.iter().filter_map(|e| *e).map(|r| match r {
-            "水" | "土" => 1,
-            _ => 0,
-        }).sum()
+        self.enchantments
+            .iter()
+            .filter_map(|e| *e)
+            .map(|r| match r {
+                "水" | "土" => 1,
+                _ => 0,
+            })
+            .sum()
     }
 
     /// Bonus max HP from enchantments (心=+2)
     #[allow(dead_code)]
     pub fn enchant_max_hp_bonus(&self) -> i32 {
-        self.enchantments.iter().filter_map(|e| *e).map(|r| match r {
-            "心" => 2,
-            _ => 0,
-        }).sum()
+        self.enchantments
+            .iter()
+            .filter_map(|e| *e)
+            .map(|r| match r {
+                "心" => 2,
+                _ => 0,
+            })
+            .sum()
     }
 
     /// Bonus gold from enchantments (金=+3)
     pub fn enchant_gold_bonus(&self) -> i32 {
-        self.enchantments.iter().filter_map(|e| *e).map(|r| match r {
-            "金" => 3,
-            _ => 0,
-        }).sum()
+        self.enchantments
+            .iter()
+            .filter_map(|e| *e)
+            .map(|r| match r {
+                "金" => 3,
+                _ => 0,
+            })
+            .sum()
     }
 
     /// Bonus FOV from enchantments (目=+1)
     pub fn enchant_fov_bonus(&self) -> i32 {
-        self.enchantments.iter().filter_map(|e| *e).map(|r| match r {
-            "目" => 1,
-            _ => 0,
-        }).sum()
+        self.enchantments
+            .iter()
+            .filter_map(|e| *e)
+            .map(|r| match r {
+                "目" => 1,
+                _ => 0,
+            })
+            .sum()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Item, ItemKind};
+    use super::{Deity, Item, ItemKind, Player, PlayerClass};
 
     #[test]
     fn item_kind_matches_variant() {
@@ -516,7 +636,50 @@ mod tests {
     fn item_display_name_uses_mystery_label_until_identified() {
         let item = Item::RevealScroll;
 
-        assert_eq!(item.display_name(false, "Cloud Seal 云符"), "? Cloud Seal 云符");
-        assert_eq!(item.display_name(true, "Cloud Seal 云符"), "👁 Reveal Scroll");
+        assert_eq!(
+            item.display_name(false, "Cloud Seal 云符"),
+            "? Cloud Seal 云符"
+        );
+        assert_eq!(
+            item.display_name(true, "Cloud Seal 云符"),
+            "👁 Reveal Scroll"
+        );
+    }
+
+    #[test]
+    fn deity_synergy_requires_dual_devotion() {
+        let mut player = Player::new(0, 0, PlayerClass::Warrior);
+        player.add_piety(Deity::Jade, 10);
+        player.add_piety(Deity::Iron, 10);
+        assert_eq!(
+            player.deity_synergy(),
+            Some(("Paladin's Vigor", "Heal 1 HP per kill AND +1 damage"))
+        );
+    }
+
+    #[test]
+    fn deity_synergy_returns_none_without_threshold() {
+        let mut player = Player::new(0, 0, PlayerClass::Warrior);
+        player.add_piety(Deity::Jade, 9);
+        player.add_piety(Deity::Iron, 10);
+        assert_eq!(player.deity_synergy(), None);
+    }
+
+    #[test]
+    fn devotion_bonus_tiers() {
+        let mut player = Player::new(0, 0, PlayerClass::Warrior);
+        assert_eq!(player.devotion_bonus(Deity::Jade), "None");
+
+        player.add_piety(Deity::Jade, 5);
+        assert_eq!(player.devotion_bonus(Deity::Jade), "Minor devotion");
+
+        player.add_piety(Deity::Jade, 5);
+        assert_eq!(
+            player.devotion_bonus(Deity::Jade),
+            "Moderate: +1 HP on kill"
+        );
+
+        player.add_piety(Deity::Jade, 5);
+        assert_eq!(player.devotion_bonus(Deity::Jade), "Major: +1 HP on kill");
     }
 }

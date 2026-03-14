@@ -33,7 +33,10 @@ pub struct StatusInstance {
 
 impl StatusInstance {
     pub fn new(kind: StatusKind, turns: i32) -> Self {
-        Self { kind, turns_left: turns }
+        Self {
+            kind,
+            turns_left: turns,
+        }
     }
 
     pub fn label(&self) -> &'static str {
@@ -93,23 +96,32 @@ pub fn has_haste(statuses: &[StatusInstance]) -> bool {
 
 #[allow(dead_code)]
 pub fn has_confused(statuses: &[StatusInstance]) -> bool {
-    statuses.iter().any(|s| matches!(s.kind, StatusKind::Confused))
+    statuses
+        .iter()
+        .any(|s| matches!(s.kind, StatusKind::Confused))
 }
 
 #[allow(dead_code)]
 pub fn has_revealed(statuses: &[StatusInstance]) -> bool {
-    statuses.iter().any(|s| matches!(s.kind, StatusKind::Revealed))
+    statuses
+        .iter()
+        .any(|s| matches!(s.kind, StatusKind::Revealed))
 }
 
 pub fn has_envenomed(statuses: &[StatusInstance]) -> bool {
-    statuses.iter().any(|s| matches!(s.kind, StatusKind::Envenomed))
+    statuses
+        .iter()
+        .any(|s| matches!(s.kind, StatusKind::Envenomed))
 }
 
 pub fn empowered_amount(statuses: &[StatusInstance]) -> i32 {
-    statuses.iter().filter_map(|s| match s.kind {
-        StatusKind::Empowered { amount } => Some(amount),
-        _ => None,
-    }).sum()
+    statuses
+        .iter()
+        .filter_map(|s| match s.kind {
+            StatusKind::Empowered { amount } => Some(amount),
+            _ => None,
+        })
+        .sum()
 }
 
 #[cfg(test)]
